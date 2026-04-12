@@ -8,7 +8,9 @@ import { generatePriceRecommendation } from '../src/lib/pricing-engine'
 import { buildLeadOutreachDraft } from '../src/server/outreach'
 import { createLeadOutreachWorkflow } from '../src/server/outreach-workflow'
 import { listOutreachWorkflows, saveOutreachWorkflow } from '../src/server/db/outreach-repository'
-import { countInboundInquiries, listInboundInquiries, saveInboundInquiry } from '../src/server/db/inquiry-repository'
+import { countInboundInquiries, listInboundInquiries, saveInboundInquiry, getInquiryWithThread, updateInquiryStatus, updateInquiryClassification, saveReplyDraft } from '../src/server/db/inquiry-repository'
+import { classifyInquiry, draftReply, type InquiryClassification } from '../src/server/ai/inquiry-intelligence'
+import { createAnthropicClientFromEnv } from '../src/server/ai/anthropic'
 import { createDealFromInquiry, listDeals, progressDeal } from '../src/server/db/deal-repository'
 import { listTransferTasks } from '../src/server/db/transfer-task-repository'
 import {
@@ -414,6 +416,101 @@ app.post('/api/inquiries/:inquiryId/create-deal', zValidator('json', createDealF
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : 'Could not create deal.' }, 400)
   }
+})
+
+// --- Inquiry intelligence ---
+
+const updateInquiryStatusSchema = z.object({
+  status: z.enum(['new', 'read', 'replied']),
+})
+
+app.get('/api/inquiries/:id/thread', async (c) => {
+  const result = await getInquiryWithThread(c.env.DB, c.req.param('id'))
+  if (!result) return c.json({ error: 'Inquiry not found.' }, 404)
+  return c.json(result)
+})
+
+app.patch(
+  '/api/inquiries/:id/status',
+  zValidator('json', updateInquiryStatusSchema),
+  async (c) => {
+    await updateInquiryStatus(c.env.DB, c.req.param('id'), c.req.valid('json').status)
+    return c.json({ ok: true })
+  },
+)
+
+app.post('/api/inquiries/:id/classify', async (c) => {
+  const inquiryWithThread = await getInquiryWithThread(c.env.DB, c.req.param('id'))
+  if (!inquiryWithThread) return c.json({ error: 'Inquiry not found.' }, 404)
+
+  const domain = await getDomain(c.env.DB, inquiryWithThread.inquiry.domainId ?? '')
+  if (!domain) return c.json({ error: 'Domain not found.' }, 404)
+
+  const client = createAnthropicClientFromEnv(c.env)
+  const result = await classifyInquiry({
+    inquiry: {
+      senderName: inquiryWithThread.inquiry.senderName,
+      senderEmail: inquiryWithThread.inquiry.senderEmail,
+      message: inquiryWithThread.inquiry.message,
+      offerAmount: inquiryWithThread.inquiry.offerAmount,
+      inquiryType: inquiryWithThread.inquiry.inquiryType,
+    },
+    domain: {
+      domainName: domain.domainName,
+      targetPrice: domain.targetPrice,
+      quickSalePrice: domain.quickSalePrice,
+    },
+    client,
+  })
+
+  await updateInquiryClassification(
+    c.env.DB,
+    c.req.param('id'),
+    result.classification,
+    result.reason,
+  )
+
+  return c.json({ ok: true, classification: result.classification, reason: result.reason })
+})
+
+app.post('/api/inquiries/:id/draft-reply', async (c) => {
+  const inquiryWithThread = await getInquiryWithThread(c.env.DB, c.req.param('id'))
+  if (!inquiryWithThread) return c.json({ error: 'Inquiry not found.' }, 404)
+  if (!inquiryWithThread.inquiry.threadId) {
+    return c.json({ error: 'Inquiry has no associated thread.' }, 400)
+  }
+
+  const domain = await getDomain(c.env.DB, inquiryWithThread.inquiry.domainId ?? '')
+  if (!domain) return c.json({ error: 'Domain not found.' }, 404)
+
+  const client = createAnthropicClientFromEnv(c.env)
+  const classification =
+    (inquiryWithThread.inquiry.classification as InquiryClassification | null) ?? 'info_request'
+
+  const result = await draftReply({
+    inquiry: {
+      senderName: inquiryWithThread.inquiry.senderName,
+      message: inquiryWithThread.inquiry.message,
+      offerAmount: inquiryWithThread.inquiry.offerAmount,
+    },
+    domain: {
+      domainName: domain.domainName,
+      targetPrice: domain.targetPrice,
+      quickSalePrice: domain.quickSalePrice,
+      language: domain.language,
+      tld: domain.tld,
+    },
+    classification,
+    client,
+  })
+
+  const draft = await saveReplyDraft(c.env.DB, {
+    threadId: inquiryWithThread.inquiry.threadId,
+    subject: result.subject,
+    body: result.body,
+  })
+
+  return c.json({ ok: true, draft })
 })
 
 app.post('/api/deals/:dealId/progress', zValidator('json', progressDealSchema), async (c) => {
