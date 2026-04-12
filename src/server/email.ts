@@ -29,7 +29,10 @@ function buildInquiryHtml(params: InquiryNotificationParams): string {
   `
 }
 
-async function resendSend(apiKey: string, payload: { from: string; to: string; subject: string; html: string }): Promise<void> {
+async function resendSend(
+  apiKey: string,
+  payload: { from: string; to: string; subject: string; html?: string; text?: string },
+): Promise<void> {
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -63,5 +66,20 @@ export async function sendTestEmail(params: { apiKey: string; from: string; to: 
     to: params.to,
     subject: 'Domain Seller Engine: test email',
     html: '<p>This is a test email from <strong>Domain Seller Engine</strong>. Email sending is configured correctly.</p>',
+  })
+}
+
+export async function sendOutreachEmail(params: {
+  apiKey: string
+  from: string
+  to: string
+  subject: string
+  body: string
+}): Promise<void> {
+  await resendSend(params.apiKey, {
+    from: params.from,
+    to: params.to,
+    subject: params.subject,
+    text: params.body,
   })
 }

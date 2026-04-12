@@ -18,7 +18,7 @@ export interface OutreachWorkflowRecord {
     id: string
     leadId: string
     domainId: string
-    status: 'draft_prepared'
+    status: 'draft_prepared' | 'approved_to_send' | 'sent'
     autoSendEnabled: boolean
     lastMessageAt: string
     createdAt: string
@@ -32,6 +32,7 @@ export interface OutreachWorkflowRecord {
     body: string
     classification: 'draft'
     createdAt: string
+    sentAt?: string | null
   }
   followupTask: {
     id: string
@@ -44,6 +45,7 @@ export interface OutreachWorkflowRecord {
     id: string
     companyName: string
     contactName: string
+    contactEmail?: string | null
   }
   domain: {
     id: string

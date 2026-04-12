@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { count, desc, eq } from 'drizzle-orm'
 import type { OutreachWorkflowRecord } from '../outreach-workflow'
 import { ensureDemoLeadAndDomain } from './demo-bootstrap'
 import { getDb } from './client'
@@ -16,7 +16,11 @@ function isoFromMillis(value: number | null | undefined) {
 export async function saveOutreachWorkflow(binding: D1Database, workflow: OutreachWorkflowRecord) {
   await ensureOutreachSchema(binding)
   const db = getDb(binding)
-  await ensureDemoLeadAndDomain(binding, workflow.lead.id)
+  const [existingLead] = await db.select({ id: leads.id }).from(leads).where(eq(leads.id, workflow.lead.id)).limit(1)
+
+  if (!existingLead) {
+    await ensureDemoLeadAndDomain(binding, workflow.lead.id)
+  }
 
   await db.insert(outreachThreads).values({
     id: workflow.thread.id,
@@ -66,6 +70,7 @@ export async function listOutreachWorkflows(binding: D1Database): Promise<Outrea
       threadCreatedAt: outreachThreads.createdAt,
       leadCompanyName: leads.companyName,
       leadContactName: contacts.contactName,
+      leadContactEmail: contacts.contactEmail,
       domainName: domains.domainName,
     })
     .from(outreachThreads)
@@ -100,7 +105,7 @@ export async function listOutreachWorkflows(binding: D1Database): Promise<Outrea
         id: row.threadId,
         leadId: row.leadId,
         domainId: row.domainId,
-        status: row.status as 'draft_prepared',
+        status: row.status as 'draft_prepared' | 'approved_to_send' | 'sent',
         autoSendEnabled: row.autoSendEnabled,
         lastMessageAt: isoFromMillis(row.lastMessageAt) ?? new Date().toISOString(),
         createdAt: isoFromMillis(row.threadCreatedAt) ?? new Date().toISOString(),
@@ -114,6 +119,7 @@ export async function listOutreachWorkflows(binding: D1Database): Promise<Outrea
         body: messageRow.body,
         classification: (messageRow.classification ?? 'draft') as 'draft',
         createdAt: isoFromMillis(messageRow.createdAt) ?? new Date().toISOString(),
+        sentAt: isoFromMillis(messageRow.sentAt) ?? null,
       },
       followupTask: {
         id: followupRow.id,
@@ -126,6 +132,7 @@ export async function listOutreachWorkflows(binding: D1Database): Promise<Outrea
         id: row.leadId,
         companyName: row.leadCompanyName,
         contactName: row.leadContactName ?? row.leadCompanyName,
+        contactEmail: row.leadContactEmail ?? null,
       },
       domain: {
         id: row.domainId,
@@ -145,6 +152,107 @@ export async function listOutreachWorkflows(binding: D1Database): Promise<Outrea
   }
 
   return results
+}
+
+export async function countOutreachWorkflowsForLead(binding: D1Database, leadId: string) {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  const [result] = await db
+    .select({ value: count() })
+    .from(outreachThreads)
+    .where(eq(outreachThreads.leadId, leadId))
+
+  return result?.value ?? 0
+}
+
+export async function getOutreachWorkflowByThreadId(binding: D1Database, threadId: string) {
+  const items = await listOutreachWorkflows(binding)
+  return items.find((item) => item.thread.id === threadId) ?? null
+}
+
+export async function updateOutreachWorkflowStatus(
+  binding: D1Database,
+  threadId: string,
+  status: 'draft_prepared' | 'approved_to_send' | 'sent',
+) {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  await db
+    .update(outreachThreads)
+    .set({
+      status,
+      lastMessageAt: Date.now(),
+    })
+    .where(eq(outreachThreads.id, threadId))
+}
+
+export async function approveOutreachWorkflow(binding: D1Database, threadId: string) {
+  const workflow = await getOutreachWorkflowByThreadId(binding, threadId)
+
+  if (!workflow) {
+    throw new Error('Outreach workflow not found.')
+  }
+
+  if (workflow.thread.status === 'sent' || workflow.message.sentAt != null) {
+    throw new Error('Outreach workflow has already been sent.')
+  }
+
+  if (workflow.thread.status === 'approved_to_send') {
+    return workflow
+  }
+
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  await db
+    .update(outreachThreads)
+    .set({
+      status: 'approved_to_send',
+    })
+    .where(eq(outreachThreads.id, threadId))
+
+  return getOutreachWorkflowByThreadId(binding, threadId)
+}
+
+export async function markOutreachWorkflowSent(binding: D1Database, threadId: string) {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  const now = Date.now()
+
+  const [messageRow] = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(eq(messages.threadId, threadId))
+    .orderBy(desc(messages.createdAt))
+    .limit(1)
+
+  if (!messageRow) {
+    throw new Error('Outreach message not found.')
+  }
+
+  await db
+    .update(messages)
+    .set({ sentAt: now })
+    .where(eq(messages.id, messageRow.id))
+
+  await db
+    .update(outreachThreads)
+    .set({
+      status: 'sent',
+      lastMessageAt: now,
+    })
+    .where(eq(outreachThreads.id, threadId))
+
+  return getOutreachWorkflowByThreadId(binding, threadId)
+}
+
+export async function listApprovedOutreachWorkflows(binding: D1Database) {
+  const items = await listOutreachWorkflows(binding)
+  return items.filter((item) => item.thread.status === 'approved_to_send')
+}
+
+export async function listSendableApprovedOutreachWorkflows(binding: D1Database) {
+  const items = await listApprovedOutreachWorkflows(binding)
+  return items.filter((item) => !!item.lead.contactEmail && item.message.sentAt == null)
 }
 
 function inferFollowUpDays(dueAt: number, createdAt: number) {
