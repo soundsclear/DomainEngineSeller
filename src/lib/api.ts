@@ -137,6 +137,9 @@ export interface InboundInquiryRecord {
   senderEmail: string
   message: string
   offerAmount: number | null
+  status: string
+  classification: string | null
+  classificationReason: string | null
   createdAt: number
   domainName: string | null
 }
@@ -364,4 +367,64 @@ export function triggerBuyerDiscoveryApi(domainId: string) {
   }>(`/api/domains/${domainId}/buyer-discovery`, {
     method: 'POST',
   })
+}
+
+export interface InquiryThreadMessage {
+  id: string
+  direction: string
+  channel: string
+  subject: string | null
+  body: string
+  classification: string | null
+  sentAt: number | null
+  createdAt: number
+}
+
+export interface InquiryWithThreadRecord {
+  inquiry: {
+    id: string
+    domainId: string | null
+    threadId: string | null
+    inquiryType: string
+    senderName: string | null
+    senderEmail: string
+    message: string
+    offerAmount: number | null
+    status: string
+    classification: string | null
+    classificationReason: string | null
+    createdAt: number
+    domainName: string | null
+  }
+  messages: InquiryThreadMessage[]
+}
+
+export async function fetchInquiryThread(inquiryId: string): Promise<InquiryWithThreadRecord> {
+  return fetchJson<InquiryWithThreadRecord>(`/api/inquiries/${inquiryId}/thread`)
+}
+
+export async function markInquiryRead(inquiryId: string): Promise<void> {
+  await fetchJson<{ ok: boolean }>(`/api/inquiries/${inquiryId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'read' }),
+  })
+}
+
+export async function classifyInquiryApi(
+  inquiryId: string,
+): Promise<{ classification: string; reason: string }> {
+  return fetchJson<{ classification: string; reason: string }>(
+    `/api/inquiries/${inquiryId}/classify`,
+    { method: 'POST' },
+  )
+}
+
+export async function draftInquiryReplyApi(
+  inquiryId: string,
+): Promise<{ ok: boolean; draft: { id: string; subject: string; body: string } }> {
+  return fetchJson<{ ok: boolean; draft: { id: string; subject: string; body: string } }>(
+    `/api/inquiries/${inquiryId}/draft-reply`,
+    { method: 'POST' },
+  )
 }
