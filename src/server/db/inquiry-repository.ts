@@ -70,6 +70,13 @@ export interface InquiryWithThread {
   }>
 }
 
+export interface NegotiationDraftPayload {
+  suggestedPrice: number
+  reasoning: string
+  draftSubject: string
+  draftBody: string
+}
+
 function addDaysIso(days: number) {
   const date = new Date()
   date.setDate(date.getDate() + days)
@@ -377,4 +384,28 @@ export async function saveReplyDraft(
   })
 
   return { id, subject: input.subject, body: input.body }
+}
+
+export async function saveNegotiationDraft(
+  binding: D1Database,
+  input: { threadId: string; payload: NegotiationDraftPayload },
+): Promise<{ id: string; payload: NegotiationDraftPayload }> {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  const id = `msg-negotiation-${crypto.randomUUID()}`
+  const now = Date.now()
+
+  await db.insert(messages).values({
+    id,
+    threadId: input.threadId,
+    direction: 'outbound',
+    channel: 'email',
+    subject: input.payload.draftSubject,
+    body: JSON.stringify(input.payload),
+    classification: 'negotiation_draft',
+    sentAt: null,
+    createdAt: now,
+  })
+
+  return { id, payload: input.payload }
 }

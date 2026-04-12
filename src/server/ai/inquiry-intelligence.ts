@@ -13,6 +13,13 @@ const draftReplyOutputSchema = z.object({
   body: z.string().min(20).max(2_000),
 })
 
+const negotiateCounterOutputSchema = z.object({
+  suggestedPrice: z.number().int().positive(),
+  reasoning: z.string().min(20).max(800),
+  draftSubject: z.string().min(5).max(200),
+  draftBody: z.string().min(20).max(2_000),
+})
+
 export interface ClassifyInquiryInput {
   inquiry: {
     senderName: string | null
@@ -54,6 +61,38 @@ export interface DraftReplyInput {
 export interface DraftReplyResult {
   subject: string
   body: string
+}
+
+export interface NegotiateCounterInput {
+  inquiry: {
+    senderName: string | null
+    senderEmail: string
+    message: string
+    offerAmount: number | null
+  }
+  domain: {
+    domainName: string
+    quickSalePrice: number | null
+    targetPrice: number | null
+    aspirationalPrice: number | null
+    language: string | null
+    tld: string
+  }
+  threadHistory: Array<{
+    direction: string
+    subject: string | null
+    body: string
+    sentAt: number | null
+    createdAt: number
+  }>
+  client?: StructuredAiClient
+}
+
+export interface NegotiateCounterResult {
+  suggestedPrice: number
+  reasoning: string
+  draftSubject: string
+  draftBody: string
 }
 
 function buildClassificationPrompt(input: ClassifyInquiryInput): string {
@@ -114,6 +153,40 @@ function buildDraftReplyPrompt(input: DraftReplyInput): string {
   return parts.join('\n')
 }
 
+function buildNegotiationPrompt(input: NegotiateCounterInput): string {
+  const language =
+    input.domain.tld === '.nl' || input.domain.language === 'NL' ? 'Dutch' : 'English'
+
+  const history = input.threadHistory
+    .map((message, index) => {
+      const timestamp = new Date(message.sentAt ?? message.createdAt).toISOString()
+      const subjectLine = message.subject ? `Subject: ${message.subject}\n` : ''
+      return [
+        `Message ${index + 1} (${message.direction}, ${timestamp})`,
+        `${subjectLine}Body: ${message.body}`,
+      ].join('\n')
+    })
+    .join('\n\n')
+
+  const parts = [
+    `You are negotiating the sale of the domain ${input.domain.domainName}.`,
+    `Write the response in ${language}.`,
+    `Buyer: ${input.inquiry.senderName ?? 'Unknown'} <${input.inquiry.senderEmail}>`,
+    `Original inquiry: ${input.inquiry.message}`,
+    `Pricing guardrails: quick sale EUR ${input.domain.quickSalePrice ?? 'unknown'}, target EUR ${input.domain.targetPrice ?? 'unknown'}, aspirational EUR ${input.domain.aspirationalPrice ?? 'unknown'}.`,
+    `Initial offer: ${input.inquiry.offerAmount != null ? `EUR ${input.inquiry.offerAmount}` : 'none stated'}.`,
+    'Use the full thread history for conversational context and negotiation continuity.',
+    'Choose the counter-offer price based only on the pricing guardrails and the latest buyer offer visible in the thread.',
+    'Do not accept the offer automatically. Stay professional, confident, and brief.',
+    'Reasoning should be 1-2 concise sentences.',
+    'Draft body should be plain text with no markdown formatting and under 140 words.',
+    'Return JSON with suggestedPrice, reasoning, draftSubject, and draftBody.',
+    `Thread history:\n${history || 'No prior thread history.'}`,
+  ]
+
+  return parts.join('\n')
+}
+
 export async function classifyInquiry(
   input: ClassifyInquiryInput,
 ): Promise<ClassifyInquiryResult> {
@@ -151,5 +224,29 @@ export async function draftReply(input: DraftReplyInput): Promise<DraftReplyResu
   return {
     subject: response.data.subject,
     body: response.data.body,
+  }
+}
+
+export async function negotiateCounter(
+  input: NegotiateCounterInput,
+): Promise<NegotiateCounterResult> {
+  if (!input.client) {
+    throw new Error('AI client is required for negotiation drafting.')
+  }
+
+  const response = await input.client.generateObject({
+    schema: negotiateCounterOutputSchema,
+    system:
+      'You draft domain-sale counter-offers. Keep output structured, conservative, and aligned to the provided pricing guardrails.',
+    prompt: buildNegotiationPrompt(input),
+    maxTokens: 800,
+    temperature: 0.2,
+  })
+
+  return {
+    suggestedPrice: response.data.suggestedPrice,
+    reasoning: response.data.reasoning,
+    draftSubject: response.data.draftSubject,
+    draftBody: response.data.draftBody,
   }
 }

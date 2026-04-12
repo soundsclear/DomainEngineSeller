@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { classifyInquiry, draftReply } from './inquiry-intelligence'
+import { classifyInquiry, draftReply, negotiateCounter } from './inquiry-intelligence'
 
 const domain = {
   domainName: 'geboorteservies.nl',
@@ -156,6 +156,56 @@ describe('draftReply', () => {
   it('throws when no client is provided', async () => {
     await expect(
       draftReply({ inquiry: baseInquiry, domain, classification: 'info_request' }),
+    ).rejects.toThrow('AI client is required')
+  })
+})
+
+describe('negotiateCounter', () => {
+  it('returns a counter-offer package for a serious offer thread', async () => {
+    const client = {
+      generateObject: vi.fn().mockResolvedValue({
+        data: {
+          suggestedPrice: 5200,
+          reasoning: 'The latest offer is credible but still below target, so a measured counter keeps room to close.',
+          draftSubject: 'Re: Bod op geboorteservies.nl',
+          draftBody:
+            'Hallo Jan,\n\nDank voor uw bod. Wij kunnen geboorteservies.nl aanbieden voor EUR 5200. Als dat in de buurt ligt van uw budget, hoor ik graag of we de details kunnen afronden.\n\nMet vriendelijke groet',
+        },
+        rawText: '{}',
+        model: 'claude-test',
+        responseId: null,
+      }),
+    }
+
+    const result = await negotiateCounter({
+      inquiry: { ...baseInquiry, offerAmount: 4500 },
+      domain: { ...domain, aspirationalPrice: 6500 },
+      threadHistory: [
+        {
+          direction: 'inbound',
+          subject: 'Bod op geboorteservies.nl',
+          body: 'Ik bied EUR 4500 voor het domein.',
+          sentAt: Date.now(),
+          createdAt: Date.now(),
+        },
+      ],
+      client,
+    })
+
+    expect(result.suggestedPrice).toBe(5200)
+    expect(result.reasoning).toBeTruthy()
+    expect(result.draftSubject).toContain('geboorteservies')
+    expect(result.draftBody).toBeTruthy()
+    expect(client.generateObject).toHaveBeenCalledOnce()
+  })
+
+  it('throws when no client is provided', async () => {
+    await expect(
+      negotiateCounter({
+        inquiry: { ...baseInquiry, offerAmount: 4500 },
+        domain: { ...domain, aspirationalPrice: 6500 },
+        threadHistory: [],
+      }),
     ).rejects.toThrow('AI client is required')
   })
 })
