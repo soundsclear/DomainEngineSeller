@@ -6,6 +6,7 @@ import { DealsPage } from './pages/DealsPage'
 import { DomainDetailPage } from './pages/DomainDetailPage'
 import { DomainsPage } from './pages/DomainsPage'
 import { InboxPage } from './pages/InboxPage'
+import { InquiryThreadPage } from './pages/InquiryThreadPage'
 import { LeadsPage } from './pages/LeadsPage'
 import { LoginPage } from './pages/LoginPage'
 import { PublicDomainPage } from './pages/PublicDomainPage'
@@ -30,6 +31,7 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'login', element: <LoginPage /> },
       { path: 'admin/inbox', element: <InboxPage /> },
+      { path: 'admin/inbox/:inquiryId', element: <InquiryThreadPage /> },
       { path: 'admin/deals', element: <DealsPage /> },
       { path: 'admin/domains', element: <DomainsPage /> },
       { path: 'admin/domains/:domainId', element: <DomainDetailPage /> },

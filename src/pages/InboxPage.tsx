@@ -5,6 +5,20 @@ import { createDealFromInquiry, fetchInboundInquiries, type InboundInquiryRecord
 import { formatCurrency } from '@/lib/formatters'
 import type { ClosingMethod } from '@/types/domain'
 
+const CLASSIFICATION_LABELS: Record<string, string> = {
+  serious_offer: 'Serious offer',
+  info_request: 'Info request',
+  lowball: 'Lowball',
+  spam: 'Spam',
+}
+
+const CLASSIFICATION_COLORS: Record<string, string> = {
+  serious_offer: 'bg-emerald-100 text-emerald-800',
+  info_request: 'bg-blue-100 text-blue-800',
+  lowball: 'bg-yellow-100 text-yellow-800',
+  spam: 'bg-red-100 text-red-800',
+}
+
 type InquiryFilter = 'all' | 'offer' | 'contact'
 
 export function InboxPage() {
@@ -92,8 +106,26 @@ export function InboxPage() {
             <article key={item.id} className="rounded-[28px] border border-white/80 bg-white p-5 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-emerald-700">{item.inquiryType === 'offer' ? 'Offer' : 'Contact'}</p>
-                  <h2 className="mt-2 text-xl font-semibold text-slate-950">{item.senderName ?? item.senderEmail}</h2>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-xs uppercase tracking-[0.2em] text-emerald-700">
+                      {item.inquiryType === 'offer' ? 'Offer' : 'Contact'}
+                    </p>
+                    {item.status === 'new' ? (
+                      <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs text-white">Nieuw</span>
+                    ) : null}
+                    {item.classification ? (
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${CLASSIFICATION_COLORS[item.classification] ?? 'bg-slate-100 text-slate-700'}`}
+                      >
+                        {CLASSIFICATION_LABELS[item.classification] ?? item.classification}
+                      </span>
+                    ) : null}
+                  </div>
+                  <Link to={`/admin/inbox/${item.id}`}>
+                    <h2 className="mt-2 text-xl font-semibold text-slate-950 hover:text-emerald-800">
+                      {item.senderName ?? item.senderEmail}
+                    </h2>
+                  </Link>
                   <p className="mt-1 text-sm text-slate-600">{item.senderEmail}</p>
                 </div>
                 <div className="text-right">
