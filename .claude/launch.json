@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Frontend (Vite)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev"],
+      "port": 5173
+    },
+    {
+      "name": "Worker API (Wrangler)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["cf:dev"],
+      "port": 8787
+    }
+  ]
+}

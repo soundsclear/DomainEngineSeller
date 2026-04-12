@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm check:*)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm test:run src/lib/csv-import.test.ts)",
+      "Bash(pnpm typecheck:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(taskkill /F /IM \"node.exe\" /FI \"WINDOWTITLE eq wrangler*\")",
+      "Bash(npx --yes kill-port 8787)",
+      "Bash(curl -s http://localhost:8787/api/dashboard)",
+      "WebFetch(domain:www.klokgieter.nl)"
+    ]
+  }
+}
