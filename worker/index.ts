@@ -53,6 +53,7 @@ type Bindings = {
   RESEND_API_KEY: string
   ADMIN_NOTIFY_EMAIL: string
   EMAIL_FROM_ADDRESS: string
+  TEST_EMAIL_OVERRIDE?: string
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -115,12 +116,12 @@ async function sendApprovedOutreachWorkflow(
   }
 
   const emailConfig = requireOutreachEmailConfig(env)
-  await sendOutreachEmail({
-    ...emailConfig,
-    to: workflow.lead.contactEmail,
-    subject: workflow.message.subject || `${workflow.domain.domainName} outreach`,
-    body: workflow.message.body,
-  })
+  const testOverride = env.TEST_EMAIL_OVERRIDE?.trim() || null
+  const to = testOverride ?? workflow.lead.contactEmail
+  const subject = testOverride
+    ? `[TEST → ${workflow.lead.contactEmail}] ${workflow.message.subject || `${workflow.domain.domainName} outreach`}`
+    : (workflow.message.subject || `${workflow.domain.domainName} outreach`)
+  await sendOutreachEmail({ ...emailConfig, to, subject, body: workflow.message.body })
 
   const updated = await markOutreachWorkflowSent(binding, threadId)
   return updated
