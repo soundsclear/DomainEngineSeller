@@ -193,3 +193,31 @@ export async function progressDeal(binding: D1Database, input: ProgressDealInput
     transferTask,
   }
 }
+
+export async function getDeal(binding: D1Database, dealId: string): Promise<DealRecordView | null> {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+
+  const [row] = await db
+    .select({
+      id: deals.id,
+      domainId: deals.domainId,
+      leadId: deals.leadId,
+      domainName: domains.domainName,
+      companyName: leads.companyName,
+      closingMethod: deals.closingMethod,
+      status: deals.status,
+      agreedPrice: deals.agreedPrice,
+      paymentSecured: deals.paymentSecured,
+      buyerApprovalState: deals.buyerApprovalState,
+      createdAt: deals.createdAt,
+      updatedAt: deals.updatedAt,
+    })
+    .from(deals)
+    .leftJoin(domains, eq(deals.domainId, domains.id))
+    .leftJoin(leads, eq(deals.leadId, leads.id))
+    .where(eq(deals.id, dealId))
+    .limit(1)
+
+  return (row as DealRecordView | undefined) ?? null
+}

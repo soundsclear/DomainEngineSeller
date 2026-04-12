@@ -560,3 +560,53 @@ export async function negotiateInquiryCounterApi(
     method: 'POST',
   })
 }
+
+export interface GenerateStripeInvoicePayloadBody {
+  buyerName: string
+  buyerEmail: string
+  currency?: 'EUR' | 'USD'
+}
+
+export interface StripeInvoicePayloadResponse {
+  ok: true
+  payload: {
+    customer_email: string
+    collection_method: 'send_invoice'
+    days_until_due: 14
+    line_items: Array<{
+      price_data: {
+        currency: string
+        product_data: { name: string }
+        unit_amount: number
+      }
+      quantity: 1
+    }>
+    metadata: {
+      dealId: string
+      domainName: string
+      buyerName: string
+    }
+  }
+}
+
+export function generateStripeInvoicePayload(dealId: string, body: GenerateStripeInvoicePayloadBody) {
+  return fetchJson<StripeInvoicePayloadResponse>(`/api/deals/${dealId}/invoice`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export interface RealDashboardMetrics {
+  totalDomains: number
+  listedDomains: number
+  totalInquiries: number
+  unreadInquiries: number
+  activeDeals: number
+  totalLeads: number
+  sentOutreach: number
+  pendingOutreach: number
+}
+
+export function fetchDashboardMetrics() {
+  return fetchJson<{ metrics: RealDashboardMetrics }>('/api/metrics/dashboard')
+}

@@ -20,7 +20,9 @@ import {
 import { countInboundInquiries, listInboundInquiries, saveInboundInquiry, getInquiryWithThread, updateInquiryStatus, updateInquiryClassification, saveReplyDraft, saveNegotiationDraft, type NegotiationDraftPayload } from '../src/server/db/inquiry-repository'
 import { classifyInquiry, draftReply, negotiateCounter, type InquiryClassification } from '../src/server/ai/inquiry-intelligence'
 import { createAnthropicClientFromEnv } from '../src/server/ai/anthropic'
-import { createDealFromInquiry, listDeals, progressDeal } from '../src/server/db/deal-repository'
+import { createDealFromInquiry, getDeal, listDeals, progressDeal } from '../src/server/db/deal-repository'
+import { buildStripeInvoicePayload } from '../src/server/stripe-invoice'
+import { getDashboardMetrics as getRealDashboardMetrics } from '../src/server/db/metrics-repository'
 import { listTransferTasks } from '../src/server/db/transfer-task-repository'
 import {
   createDomain,
@@ -924,6 +926,53 @@ app.post('/api/test/email', async (c) => {
   } catch (error) {
     return c.json({ ok: false, error: error instanceof Error ? error.message : 'Failed to send test email.' }, 500)
   }
+})
+
+// --- Stripe invoice payload ---
+
+const generateInvoicePayloadSchema = z.object({
+  buyerName: z.string().min(1),
+  buyerEmail: z.string().email(),
+  currency: z.enum(['EUR', 'USD']).optional(),
+})
+
+app.post('/api/deals/:dealId/invoice', zValidator('json', generateInvoicePayloadSchema), async (c) => {
+  try {
+    const deal = await getDeal(c.env.DB, c.req.param('dealId'))
+
+    if (!deal) {
+      return c.json({ error: 'Deal not found.' }, 404)
+    }
+
+    if (deal.closingMethod !== 'stripe_invoice_manual_transfer') {
+      return c.json(
+        { error: `Invoice payload can only be generated for stripe_invoice_manual_transfer deals. This deal uses: ${deal.closingMethod}.` },
+        400,
+      )
+    }
+
+    const { buyerName, buyerEmail, currency } = c.req.valid('json')
+
+    const payload = buildStripeInvoicePayload({
+      dealId: deal.id,
+      domainName: deal.domainName ?? deal.domainId,
+      agreedPriceInCents: deal.agreedPrice ?? 0,
+      buyerName,
+      buyerEmail,
+      currency,
+    })
+
+    return c.json({ ok: true, payload })
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Could not generate invoice payload.' }, 400)
+  }
+})
+
+// --- Real dashboard metrics ---
+
+app.get('/api/metrics/dashboard', async (c) => {
+  const metrics = await getRealDashboardMetrics(c.env.DB)
+  return c.json({ metrics })
 })
 
 export default app
