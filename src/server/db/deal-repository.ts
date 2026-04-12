@@ -82,8 +82,26 @@ export async function createDealFromInquiry(binding: D1Database, input: CreateDe
     .limit(1)
 
   const now = Date.now()
-  const dealId = `deal-${crypto.randomUUID()}`
   const leadId = thread?.leadId ?? null
+
+  const existingDeals = await db
+    .select({
+      id: deals.id,
+      status: deals.status,
+    })
+    .from(deals)
+    .where(eq(deals.domainId, inquiry.domainId))
+    .orderBy(desc(deals.updatedAt))
+
+  const reusableDeal = existingDeals.find((deal) =>
+    deal.status !== 'completed' && deal.status !== 'failed' && deal.status !== 'cancelled',
+  )
+
+  if (reusableDeal) {
+    return { dealId: reusableDeal.id, created: false as const }
+  }
+
+  const dealId = `deal-${crypto.randomUUID()}`
 
   await db.insert(deals).values({
     id: dealId,
@@ -98,6 +116,14 @@ export async function createDealFromInquiry(binding: D1Database, input: CreateDe
     updatedAt: now,
   })
 
+  await db
+    .update(domains)
+    .set({
+      status: 'negotiation',
+      updatedAt: now,
+    })
+    .where(eq(domains.id, inquiry.domainId))
+
   await db.insert(dealEvents).values({
     id: `deal-event-${crypto.randomUUID()}`,
     dealId,
@@ -106,7 +132,7 @@ export async function createDealFromInquiry(binding: D1Database, input: CreateDe
     createdAt: now,
   })
 
-  return { dealId }
+  return { dealId, created: true as const }
 }
 
 export async function progressDeal(binding: D1Database, input: ProgressDealInput) {
