@@ -77,7 +77,36 @@ export interface DomainLeadRecord {
   doNotContact: boolean
   country: string | null
   source: string | null
+  contactName: string | null
+  contactEmail: string | null
   createdAt: number
+}
+
+export interface DomainLeadOutreachDraftRecord {
+  sequenceStep: 'initial' | 'follow_up_1' | 'follow_up_2'
+  subject: string
+  body: string
+  tone: 'concise' | 'standard' | 'detailed'
+  language: 'NL' | 'EN'
+  recommendedFollowUpDays: number | null
+  wordCount: number
+  personalizationTokensUsed: string[]
+}
+
+export interface DomainLeadOutreachDraftResponse {
+  lead: DomainLeadRecord
+  domain: {
+    id: string
+    domainName: string
+  }
+  result: {
+    eligible: boolean
+    reason: string
+    draft: DomainLeadOutreachDraftRecord | null
+  }
+  meta: {
+    outreachCount: number
+  }
 }
 
 export interface OutreachDraftRequestPayload {
@@ -96,7 +125,7 @@ export interface OutreachWorkflowRecord {
     id: string
     leadId: string
     domainId: string
-    status: 'draft_prepared'
+    status: 'draft_prepared' | 'approved_to_send' | 'sent'
     autoSendEnabled: boolean
     lastMessageAt: string
     createdAt: string
@@ -110,6 +139,7 @@ export interface OutreachWorkflowRecord {
     body: string
     classification: 'draft'
     createdAt: string
+    sentAt?: string | null
   }
   followupTask: {
     id: string
@@ -122,6 +152,7 @@ export interface OutreachWorkflowRecord {
     id: string
     companyName: string
     contactName: string
+    contactEmail?: string | null
   }
   domain: {
     id: string
@@ -255,12 +286,46 @@ export function fetchOutreachWorkflows() {
   return fetchJson<{ items: OutreachWorkflowRecord[] }>('/api/outreach/workflows')
 }
 
+export interface OutreachWorkflowMutationResponse {
+  ok: true
+  message?: string
+  item?: OutreachWorkflowRecord
+}
+
+export interface OutreachWorkflowBatchMutationResponse {
+  ok: true
+  message?: string
+  items?: OutreachWorkflowRecord[]
+  sentCount?: number
+  skippedCount?: number
+  blockedCount?: number
+}
+
+export function approveOutreachWorkflow(threadId: string) {
+  return fetchJson<OutreachWorkflowMutationResponse>(`/api/outreach/workflows/${threadId}/approve`, {
+    method: 'POST',
+  })
+}
+
+export function sendOutreachWorkflowNow(threadId: string) {
+  return fetchJson<OutreachWorkflowMutationResponse>(`/api/outreach/workflows/${threadId}/send-now`, {
+    method: 'POST',
+  })
+}
+
+export function batchSendOutreachWorkflows(threadIds: string[]) {
+  return fetchJson<OutreachWorkflowBatchMutationResponse>('/api/outreach/workflows/send-approved', {
+    method: 'POST',
+    body: JSON.stringify({ threadIds }),
+  })
+}
+
 export function fetchInboundInquiries() {
   return fetchJson<{ items: InboundInquiryRecord[] }>('/api/inquiries')
 }
 
 export function createDealFromInquiry(inquiryId: string, closingMethod: ClosingMethod) {
-  return fetchJson<{ ok: true; dealId: string }>(`/api/inquiries/${inquiryId}/create-deal`, {
+  return fetchJson<{ ok: true; dealId: string; created: boolean }>(`/api/inquiries/${inquiryId}/create-deal`, {
     method: 'POST',
     body: JSON.stringify({ closingMethod }),
   })
@@ -353,6 +418,48 @@ export function fetchDomainLeads(domainId: string) {
   return fetchJson<{ items: DomainLeadRecord[] }>(`/api/domains/${domainId}/leads`)
 }
 
+export function updateDomainLeadContact(
+  domainId: string,
+  leadId: string,
+  payload: { contactName: string; contactEmail: string },
+) {
+  return fetchJson<{ ok: true; item: DomainLeadRecord }>(
+    `/api/domains/${domainId}/leads/${leadId}/contact`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function generateDomainLeadOutreachDraft(
+  domainId: string,
+  leadId: string,
+  payload: OutreachDraftRequestPayload,
+) {
+  return fetchJson<DomainLeadOutreachDraftResponse>(
+    `/api/domains/${domainId}/leads/${leadId}/outreach-draft`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function saveDomainLeadOutreachWorkflow(
+  domainId: string,
+  leadId: string,
+  payload: OutreachDraftRequestPayload,
+) {
+  return fetchJson<{ ok: true; item: OutreachWorkflowRecord }>(
+    `/api/domains/${domainId}/leads/${leadId}/outreach-workflow`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
 export function triggerBuyerDiscoveryApi(domainId: string) {
   return fetchJson<{
     ok: true
@@ -378,6 +485,13 @@ export interface InquiryThreadMessage {
   classification: string | null
   sentAt: number | null
   createdAt: number
+}
+
+export interface NegotiationDraftRecord {
+  suggestedPrice: number
+  reasoning: string
+  draftSubject: string
+  draftBody: string
 }
 
 export interface InquiryWithThreadRecord {
@@ -427,4 +541,22 @@ export async function draftInquiryReplyApi(
     `/api/inquiries/${inquiryId}/draft-reply`,
     { method: 'POST' },
   )
+}
+
+export async function negotiateInquiryCounterApi(
+  inquiryId: string,
+): Promise<{
+  ok: boolean
+  deal: { dealId: string; created: boolean }
+  draft: { id: string; payload: NegotiationDraftRecord }
+  negotiation: NegotiationDraftRecord
+}> {
+  return fetchJson<{
+    ok: boolean
+    deal: { dealId: string; created: boolean }
+    draft: { id: string; payload: NegotiationDraftRecord }
+    negotiation: NegotiationDraftRecord
+  }>(`/api/inquiries/${inquiryId}/negotiate`, {
+    method: 'POST',
+  })
 }

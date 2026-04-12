@@ -7,13 +7,18 @@ import {
   fetchDomain,
   fetchDomainLeads,
   fetchDomainPageContent,
+  fetchOutreachWorkflows,
+  generateDomainLeadOutreachDraft,
   generateDomainPageContentApi,
+  saveDomainLeadOutreachWorkflow,
   triggerBuyerDiscoveryApi,
   updateDomainApi,
   updateDomainPageContentApi,
   type CreateDomainPayload,
   type DomainLeadRecord,
+  type DomainLeadOutreachDraftResponse,
   type DomainPageContentPayload,
+  type OutreachWorkflowRecord,
   type PriceRecommendationSummary,
 } from '@/lib/api'
 import { resolveDomainPageContent, type DomainPageContentRecord } from '@/lib/domain-page-content'
@@ -43,13 +48,23 @@ export function DomainDetailPage() {
   const [buyerDiscoveryLoading, setBuyerDiscoveryLoading] = useState(false)
   const [buyerDiscoveryMessage, setBuyerDiscoveryMessage] = useState<string | null>(null)
   const [buyerDiscoveryError, setBuyerDiscoveryError] = useState<string | null>(null)
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
+  const [senderName, setSenderName] = useState('Jan Seller')
+  const [senderEmail, setSenderEmail] = useState('jan@dse.example')
+  const [outreachTone, setOutreachTone] = useState<'concise' | 'standard' | 'detailed'>('standard')
+  const [leadDraftState, setLeadDraftState] = useState<DomainLeadOutreachDraftResponse | null>(null)
+  const [leadDraftLoading, setLeadDraftLoading] = useState(false)
+  const [leadDraftError, setLeadDraftError] = useState<string | null>(null)
+  const [leadSaveLoading, setLeadSaveLoading] = useState(false)
+  const [leadSaveMessage, setLeadSaveMessage] = useState<string | null>(null)
+  const [outreachWorkflows, setOutreachWorkflows] = useState<OutreachWorkflowRecord[]>([])
 
   useEffect(() => {
     if (missingDomainId) return
     let active = true
 
-    Promise.all([fetchDomain(domainId), fetchDomainPageContent(domainId), fetchDomainLeads(domainId)])
-      .then(([domainResponse, contentResponse, leadResponse]) => {
+    Promise.all([fetchDomain(domainId), fetchDomainPageContent(domainId), fetchDomainLeads(domainId), fetchOutreachWorkflows()])
+      .then(([domainResponse, contentResponse, leadResponse, workflowResponse]) => {
         if (!active) {
           return
         }
@@ -58,7 +73,11 @@ export function DomainDetailPage() {
         setRecommendation(domainResponse.recommendation)
         setPageContent(contentResponse.item)
         setLeads(leadResponse.items)
+        setSelectedLeadId((current) => current ?? leadResponse.items[0]?.id ?? null)
         setContentForm(toContentForm(domainResponse.item, contentResponse.item))
+        setOutreachWorkflows(
+          workflowResponse.items.filter((workflow) => workflow.domain.id === domainResponse.item.id),
+        )
         setError(null)
       })
       .catch((err: Error) => {
@@ -175,6 +194,7 @@ export function DomainDetailPage() {
       const response = await triggerBuyerDiscoveryApi(domainId)
       const refreshedLeads = await fetchDomainLeads(domainId)
       setLeads(refreshedLeads.items)
+      setSelectedLeadId((current) => current ?? refreshedLeads.items[0]?.id ?? null)
 
       const summary = [
         `${response.meta.created} nieuwe buyers gevonden`,
@@ -214,6 +234,63 @@ export function DomainDetailPage() {
         Even geduld.
       </SectionCard>
     )
+  }
+
+  const selectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null
+
+  async function handleGenerateLeadDraft(leadId: string) {
+    if (!domainId) return
+
+    setSelectedLeadId(leadId)
+    setLeadDraftLoading(true)
+    setLeadDraftError(null)
+    setLeadSaveMessage(null)
+
+    try {
+      const response = await generateDomainLeadOutreachDraft(domainId, leadId, {
+        sender: {
+          name: senderName,
+          email: senderEmail,
+        },
+        tone: outreachTone,
+        outreachCount: 0,
+        autoSendEnabled: false,
+        dailyLimit: 10,
+      })
+      setLeadDraftState(response)
+    } catch (err) {
+      setLeadDraftError(err instanceof Error ? err.message : 'Could not generate outreach draft.')
+      setLeadDraftState(null)
+    } finally {
+      setLeadDraftLoading(false)
+    }
+  }
+
+  async function handleSaveLeadWorkflow(leadId: string) {
+    if (!domainId || !leadDraftState?.result.draft || !leadDraftState.result.eligible) return
+
+    setLeadSaveLoading(true)
+    setLeadDraftError(null)
+    setLeadSaveMessage(null)
+
+    try {
+      const response = await saveDomainLeadOutreachWorkflow(domainId, leadId, {
+        sender: {
+          name: senderName,
+          email: senderEmail,
+        },
+        tone: outreachTone,
+        outreachCount: 0,
+        autoSendEnabled: false,
+        dailyLimit: 10,
+      })
+      setOutreachWorkflows((current) => [response.item, ...current.filter((item) => item.thread.id !== response.item.thread.id)])
+      setLeadSaveMessage('Draft opgeslagen als outreach workflow.')
+    } catch (err) {
+      setLeadDraftError(err instanceof Error ? err.message : 'Could not save outreach workflow.')
+    } finally {
+      setLeadSaveLoading(false)
+    }
   }
 
   return (
@@ -478,6 +555,36 @@ export function DomainDetailPage() {
             </div>
             {buyerDiscoveryError ? <p className="text-sm text-rose-700">{buyerDiscoveryError}</p> : null}
             {buyerDiscoveryMessage ? <p className="text-sm text-emerald-700">{buyerDiscoveryMessage}</p> : null}
+            <div className="grid gap-4 md:grid-cols-3">
+              <label className="space-y-2 text-sm text-slate-700 md:col-span-1">
+                <span>Sender name</span>
+                <input
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                  value={senderName}
+                  onChange={(event) => setSenderName(event.target.value)}
+                />
+              </label>
+              <label className="space-y-2 text-sm text-slate-700 md:col-span-1">
+                <span>Sender email</span>
+                <input
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                  value={senderEmail}
+                  onChange={(event) => setSenderEmail(event.target.value)}
+                />
+              </label>
+              <label className="space-y-2 text-sm text-slate-700 md:col-span-1">
+                <span>Tone</span>
+                <select
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                  value={outreachTone}
+                  onChange={(event) => setOutreachTone(event.target.value as 'concise' | 'standard' | 'detailed')}
+                >
+                  <option value="concise">Concise</option>
+                  <option value="standard">Standard</option>
+                  <option value="detailed">Detailed</option>
+                </select>
+              </label>
+            </div>
             {leads.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500">
                 Nog geen buyer discovery leads voor dit domein.
@@ -485,7 +592,14 @@ export function DomainDetailPage() {
             ) : (
               <div className="space-y-3">
                 {leads.map((lead) => (
-                  <article key={lead.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <article
+                    key={lead.id}
+                    className={
+                      lead.id === selectedLeadId
+                        ? 'rounded-2xl border border-emerald-300 bg-emerald-50 p-4'
+                        : 'rounded-2xl border border-slate-200 bg-white p-4'
+                    }
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <h3 className="text-base font-medium text-slate-950">{lead.companyName}</h3>
@@ -510,10 +624,107 @@ export function DomainDetailPage() {
                       {lead.country ? <span>{lead.country}</span> : null}
                       {lead.doNotContact ? <span>do not contact</span> : null}
                     </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleGenerateLeadDraft(lead.id)}
+                        disabled={leadDraftLoading}
+                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+                      >
+                        {leadDraftLoading && selectedLeadId === lead.id ? 'Generating...' : 'Generate outreach draft'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveLeadWorkflow(lead.id)}
+                        disabled={
+                          leadSaveLoading ||
+                          selectedLeadId !== lead.id ||
+                          !leadDraftState?.result.draft ||
+                          !leadDraftState.result.eligible
+                        }
+                        className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-900 disabled:opacity-60"
+                      >
+                        {leadSaveLoading && selectedLeadId === lead.id ? 'Saving...' : 'Save to workflow'}
+                      </button>
+                    </div>
                   </article>
                 ))}
               </div>
             )}
+
+            {leadDraftError ? <p className="text-sm text-rose-700">{leadDraftError}</p> : null}
+            {leadSaveMessage ? <p className="text-sm text-emerald-700">{leadSaveMessage}</p> : null}
+
+            {selectedLead && leadDraftState && selectedLead.id === leadDraftState.lead.id ? (
+              <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+                <div
+                  className={
+                    leadDraftState.result.eligible
+                      ? 'rounded-xl bg-emerald-50 p-4 text-sm text-emerald-900'
+                      : 'rounded-xl bg-amber-50 p-4 text-sm text-amber-900'
+                  }
+                >
+                  <p className="font-medium">
+                    {leadDraftState.lead.companyName} · {leadDraftState.domain.domainName}
+                  </p>
+                  <p className="mt-1">{leadDraftState.result.reason}</p>
+                </div>
+
+                {leadDraftState.result.draft ? (
+                  <>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <Detail label="Sequence" value={leadDraftState.result.draft.sequenceStep.replaceAll('_', ' ')} />
+                      <Detail label="Language" value={leadDraftState.result.draft.language} />
+                      <Detail
+                        label="Next follow-up"
+                        value={
+                          leadDraftState.result.draft.recommendedFollowUpDays == null
+                            ? 'No follow-up needed'
+                            : `${leadDraftState.result.draft.recommendedFollowUpDays} days`
+                        }
+                      />
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Subject</p>
+                      <p className="mt-2 text-sm font-medium text-slate-900">
+                        {leadDraftState.result.draft.subject}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Draft body</p>
+                      <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                        {leadDraftState.result.draft.body}
+                      </pre>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+            {outreachWorkflows.length > 0 ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-medium text-slate-900">Saved outreach workflows</p>
+                <div className="mt-3 space-y-3">
+                  {outreachWorkflows.map((workflow) => (
+                    <article key={workflow.thread.id} className="rounded-xl bg-white p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">
+                            {workflow.lead.companyName} · {workflow.draft.sequenceStep.replaceAll('_', ' ')}
+                          </p>
+                          <p className="mt-1 text-sm text-slate-600">{workflow.message.subject}</p>
+                        </div>
+                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
+                          {workflow.followupTask.dueAt
+                            ? `Follow-up ${new Date(workflow.followupTask.dueAt).toLocaleDateString('nl-NL')}`
+                            : 'Final step'}
+                        </span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </SectionCard>
       </div>

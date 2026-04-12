@@ -6,10 +6,19 @@ import { determineClosingNextStep } from '../src/lib/closing-rules'
 import { demoLeads } from '../src/lib/demo-data'
 import { generatePriceRecommendation } from '../src/lib/pricing-engine'
 import { buildLeadOutreachDraft } from '../src/server/outreach'
+import { buildBuyerDiscoveryOutreachDraft } from '../src/server/buyer-outreach'
 import { createLeadOutreachWorkflow } from '../src/server/outreach-workflow'
-import { listOutreachWorkflows, saveOutreachWorkflow } from '../src/server/db/outreach-repository'
-import { countInboundInquiries, listInboundInquiries, saveInboundInquiry, getInquiryWithThread, updateInquiryStatus, updateInquiryClassification, saveReplyDraft } from '../src/server/db/inquiry-repository'
-import { classifyInquiry, draftReply, type InquiryClassification } from '../src/server/ai/inquiry-intelligence'
+import {
+  approveOutreachWorkflow,
+  countOutreachWorkflowsForLead,
+  getOutreachWorkflowByThreadId,
+  listOutreachWorkflows,
+  listSendableApprovedOutreachWorkflows,
+  markOutreachWorkflowSent,
+  saveOutreachWorkflow,
+} from '../src/server/db/outreach-repository'
+import { countInboundInquiries, listInboundInquiries, saveInboundInquiry, getInquiryWithThread, updateInquiryStatus, updateInquiryClassification, saveReplyDraft, saveNegotiationDraft, type NegotiationDraftPayload } from '../src/server/db/inquiry-repository'
+import { classifyInquiry, draftReply, negotiateCounter, type InquiryClassification } from '../src/server/ai/inquiry-intelligence'
 import { createAnthropicClientFromEnv } from '../src/server/ai/anthropic'
 import { createDealFromInquiry, listDeals, progressDeal } from '../src/server/db/deal-repository'
 import { listTransferTasks } from '../src/server/db/transfer-task-repository'
@@ -28,10 +37,10 @@ import {
   listPublicDomains,
   upsertDomainPageContent,
 } from '../src/server/db/public-domain-repository'
-import { listLeadsForDomain } from '../src/server/db/lead-repository'
+import { getLeadById, listLeadsForDomain } from '../src/server/db/lead-repository'
 import { discoverAndStoreBuyerLeads } from '../src/server/ai/buyer-discovery'
 import { generateAndStoreDomainSeoContent } from '../src/server/ai/seo-generation'
-import { sendInquiryNotification, sendTestEmail } from '../src/server/email'
+import { sendInquiryNotification, sendOutreachEmail, sendTestEmail } from '../src/server/email'
 
 type Bindings = {
   DB: D1Database
@@ -45,6 +54,75 @@ type Bindings = {
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
+
+function parseNegotiationDraftMessage(body: string): NegotiationDraftPayload | null {
+  try {
+    const parsed = JSON.parse(body) as Partial<NegotiationDraftPayload>
+    if (
+      typeof parsed.suggestedPrice === 'number' &&
+      typeof parsed.reasoning === 'string' &&
+      typeof parsed.draftSubject === 'string' &&
+      typeof parsed.draftBody === 'string'
+    ) {
+      return {
+        suggestedPrice: parsed.suggestedPrice,
+        reasoning: parsed.reasoning,
+        draftSubject: parsed.draftSubject,
+        draftBody: parsed.draftBody,
+      }
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+function requireOutreachEmailConfig(env: Bindings) {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM_ADDRESS) {
+    throw new Error('Email is not configured. Set RESEND_API_KEY and EMAIL_FROM_ADDRESS.')
+  }
+
+  return {
+    apiKey: env.RESEND_API_KEY,
+    from: env.EMAIL_FROM_ADDRESS,
+  }
+}
+
+async function sendApprovedOutreachWorkflow(
+  binding: D1Database,
+  env: Bindings,
+  threadId: string,
+) {
+  const workflow = await getOutreachWorkflowByThreadId(binding, threadId)
+
+  if (!workflow) {
+    throw new Error('Outreach workflow not found.')
+  }
+
+  if (workflow.message.sentAt != null || workflow.thread.status === 'sent') {
+    throw new Error('Outreach workflow has already been sent.')
+  }
+
+  if (workflow.thread.status !== 'approved_to_send') {
+    throw new Error('Outreach workflow must be approved before sending.')
+  }
+
+  if (!workflow.lead.contactEmail) {
+    throw new Error('Outreach workflow is missing a contact email.')
+  }
+
+  const emailConfig = requireOutreachEmailConfig(env)
+  await sendOutreachEmail({
+    ...emailConfig,
+    to: workflow.lead.contactEmail,
+    subject: workflow.message.subject || `${workflow.domain.domainName} outreach`,
+    body: workflow.message.body,
+  })
+
+  const updated = await markOutreachWorkflowSent(binding, threadId)
+  return updated
+}
 
 // --- Zod schemas ---
 
@@ -78,6 +156,10 @@ const progressDealSchema = z.object({
   explicitInvoiceTransferApproval: z.boolean().optional(),
   buyerXelAccount: z.string().optional(),
   buyerRegistrar: z.string().optional(),
+})
+
+const outreachBatchSendSchema = z.object({
+  threadIds: z.array(z.string().min(1)).optional().default([]),
 })
 
 const createDomainSchema = z.object({
@@ -236,6 +318,133 @@ app.get('/api/domains/:domainId/leads', async (c) => {
   return c.json({ items })
 })
 
+app.post(
+  '/api/domains/:domainId/leads/:leadId/outreach-draft',
+  zValidator('json', outreachDraftRequestSchema),
+  async (c) => {
+    try {
+      const domainId = c.req.param('domainId')
+      const leadId = c.req.param('leadId')
+      const lead = await getLeadById(c.env.DB, leadId)
+
+      if (!lead || lead.domainId !== domainId) {
+        return c.json({ error: 'Lead not found for this domain.' }, 404)
+      }
+
+      const domain = await getDomain(c.env.DB, domainId)
+      if (!domain) {
+        return c.json({ error: 'Domain not found.' }, 404)
+      }
+
+      const outreachCount = await countOutreachWorkflowsForLead(c.env.DB, leadId)
+      const response = buildBuyerDiscoveryOutreachDraft({
+        lead,
+        domain,
+        sender: c.req.valid('json').sender,
+        tone: c.req.valid('json').tone,
+        outreachCount,
+        autoSendEnabled: c.req.valid('json').autoSendEnabled,
+        dailyLimit: c.req.valid('json').dailyLimit,
+      })
+
+      return c.json(response)
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Could not build outreach draft.' }, 400)
+    }
+  },
+)
+
+app.post(
+  '/api/domains/:domainId/leads/:leadId/outreach-workflow',
+  zValidator('json', outreachDraftRequestSchema),
+  async (c) => {
+    try {
+      const domainId = c.req.param('domainId')
+      const leadId = c.req.param('leadId')
+      const lead = await getLeadById(c.env.DB, leadId)
+
+      if (!lead || lead.domainId !== domainId) {
+        return c.json({ error: 'Lead not found for this domain.' }, 404)
+      }
+
+      const domain = await getDomain(c.env.DB, domainId)
+      if (!domain) {
+        return c.json({ error: 'Domain not found.' }, 404)
+      }
+
+      const outreachCount = await countOutreachWorkflowsForLead(c.env.DB, leadId)
+      const built = buildBuyerDiscoveryOutreachDraft({
+        lead,
+        domain,
+        sender: c.req.valid('json').sender,
+        tone: c.req.valid('json').tone,
+        outreachCount,
+        autoSendEnabled: c.req.valid('json').autoSendEnabled,
+        dailyLimit: c.req.valid('json').dailyLimit,
+      })
+
+      if (!built.result.eligible || !built.result.draft) {
+        return c.json({ error: built.result.reason }, 400)
+      }
+
+      const workflow = {
+        thread: {
+          id: `thread-${crypto.randomUUID()}`,
+          leadId: lead.id,
+          domainId: domain.id,
+          status: 'draft_prepared' as const,
+          autoSendEnabled: c.req.valid('json').autoSendEnabled ?? false,
+          lastMessageAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+        message: {
+          id: `msg-${crypto.randomUUID()}`,
+          threadId: '',
+          direction: 'outbound' as const,
+          channel: 'email' as const,
+          subject: built.result.draft.subject,
+          body: built.result.draft.body,
+          classification: 'draft' as const,
+          createdAt: new Date().toISOString(),
+        },
+        followupTask: {
+          id: `followup-${crypto.randomUUID()}`,
+          threadId: '',
+          dueAt:
+            built.result.draft.recommendedFollowUpDays == null
+              ? null
+              : new Date(
+                  Date.now() + built.result.draft.recommendedFollowUpDays * 24 * 60 * 60 * 1000,
+                ).toISOString(),
+          status:
+            built.result.draft.recommendedFollowUpDays == null
+              ? ('not_needed' as const)
+              : ('pending' as const),
+          createdAt: new Date().toISOString(),
+        },
+        lead: {
+          id: lead.id,
+          companyName: lead.companyName,
+          contactName: lead.companyName,
+        },
+        domain: {
+          id: domain.id,
+          domainName: domain.domainName,
+        },
+        draft: built.result.draft,
+      }
+
+      workflow.message.threadId = workflow.thread.id
+      workflow.followupTask.threadId = workflow.thread.id
+
+      const record = await saveOutreachWorkflow(c.env.DB, workflow)
+      return c.json({ ok: true, item: record }, 201)
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Could not save outreach workflow.' }, 400)
+    }
+  },
+)
+
 app.post('/api/domains/:domainId/buyer-discovery', async (c) => {
   try {
     const result = await discoverAndStoreBuyerLeads({
@@ -346,6 +555,75 @@ app.post(
   },
 )
 
+app.post('/api/outreach/workflows/:threadId/approve', async (c) => {
+  try {
+    const item = await approveOutreachWorkflow(c.env.DB, c.req.param('threadId'))
+
+    if (!item) {
+      return c.json({ error: 'Outreach workflow not found.' }, 404)
+    }
+
+    return c.json({ ok: true, item })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not approve outreach workflow.'
+    const status = message.includes('not found') ? 404 : 400
+
+    return c.json({ error: message }, status)
+  }
+})
+
+app.post('/api/outreach/workflows/:threadId/send-now', async (c) => {
+  try {
+    const item = await sendApprovedOutreachWorkflow(c.env.DB, c.env, c.req.param('threadId'))
+    return c.json({ ok: true, item })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not send outreach workflow.'
+    const status =
+      message.includes('not found') ? 404 : message.includes('already been sent') ? 409 : 400
+
+    return c.json({ error: message }, status)
+  }
+})
+
+app.post('/api/outreach/workflows/send-approved', zValidator('json', outreachBatchSendSchema), async (c) => {
+  try {
+    requireOutreachEmailConfig(c.env)
+    const requestedThreadIds = new Set(c.req.valid('json').threadIds)
+    const items = (await listSendableApprovedOutreachWorkflows(c.env.DB)).filter((workflow) =>
+      requestedThreadIds.size === 0 ? true : requestedThreadIds.has(workflow.thread.id),
+    )
+    const sent: Array<Awaited<ReturnType<typeof getOutreachWorkflowByThreadId>>> = []
+    const failed: Array<{ threadId: string; error: string }> = []
+
+    for (const workflow of items) {
+      try {
+        const updated = await sendApprovedOutreachWorkflow(c.env.DB, c.env, workflow.thread.id)
+        if (updated) {
+          sent.push(updated)
+        }
+      } catch (error) {
+        failed.push({
+          threadId: workflow.thread.id,
+          error: error instanceof Error ? error.message : 'Could not send outreach workflow.',
+        })
+      }
+    }
+
+    return c.json({
+      ok: true,
+      summary: {
+        considered: items.length,
+        sent: sent.length,
+        failed: failed.length,
+      },
+      items: sent,
+      failed,
+    })
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Could not send approved outreach workflows.' }, 400)
+  }
+})
+
 // --- Inquiries ---
 
 app.get('/api/inquiries', async (c) => {
@@ -412,7 +690,7 @@ app.post('/api/inquiries/:inquiryId/create-deal', zValidator('json', createDealF
       inquiryId: c.req.param('inquiryId'),
       ...c.req.valid('json'),
     })
-    return c.json({ ok: true, ...result }, 201)
+    return c.json({ ok: true, ...result }, result.created ? 201 : 200)
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : 'Could not create deal.' }, 400)
   }
@@ -511,6 +789,78 @@ app.post('/api/inquiries/:id/draft-reply', async (c) => {
   })
 
   return c.json({ ok: true, draft })
+})
+
+app.post('/api/inquiries/:id/negotiate', async (c) => {
+  const inquiryWithThread = await getInquiryWithThread(c.env.DB, c.req.param('id'))
+  if (!inquiryWithThread) return c.json({ error: 'Inquiry not found.' }, 404)
+  if (!inquiryWithThread.inquiry.threadId) {
+    return c.json({ error: 'Inquiry has no associated thread.' }, 400)
+  }
+  if (inquiryWithThread.inquiry.classification !== 'serious_offer') {
+    return c.json({ error: 'Negotiation is only available for serious offers.' }, 400)
+  }
+
+  const domain = await getDomain(c.env.DB, inquiryWithThread.inquiry.domainId ?? '')
+  if (!domain) return c.json({ error: 'Domain not found.' }, 404)
+
+  const deal = await createDealFromInquiry(c.env.DB, {
+    inquiryId: c.req.param('id'),
+    closingMethod: 'escrow_com',
+  })
+
+  const client = createAnthropicClientFromEnv(c.env)
+  const result = await negotiateCounter({
+    inquiry: {
+      senderName: inquiryWithThread.inquiry.senderName,
+      senderEmail: inquiryWithThread.inquiry.senderEmail,
+      message: inquiryWithThread.inquiry.message,
+      offerAmount: inquiryWithThread.inquiry.offerAmount,
+    },
+    domain: {
+      domainName: domain.domainName,
+      quickSalePrice: domain.quickSalePrice,
+      targetPrice: domain.targetPrice,
+      aspirationalPrice: domain.aspirationalPrice,
+      language: domain.language,
+      tld: domain.tld,
+    },
+    threadHistory: inquiryWithThread.messages.map((message) => {
+      if (message.classification === 'negotiation_draft') {
+        const payload = parseNegotiationDraftMessage(message.body)
+        if (payload) {
+          return {
+            direction: message.direction,
+            subject: payload.draftSubject,
+            body: `Suggested counter-offer: EUR ${payload.suggestedPrice}\nReasoning: ${payload.reasoning}\nDraft email:\n${payload.draftBody}`,
+            sentAt: message.sentAt,
+            createdAt: message.createdAt,
+          }
+        }
+      }
+
+      return {
+        direction: message.direction,
+        subject: message.subject,
+        body: message.body,
+        sentAt: message.sentAt,
+        createdAt: message.createdAt,
+      }
+    }),
+    client,
+  })
+
+  const draft = await saveNegotiationDraft(c.env.DB, {
+    threadId: inquiryWithThread.inquiry.threadId,
+    payload: result,
+  })
+
+  return c.json({
+    ok: true,
+    deal,
+    draft,
+    negotiation: result,
+  })
 })
 
 app.post('/api/deals/:dealId/progress', zValidator('json', progressDealSchema), async (c) => {
