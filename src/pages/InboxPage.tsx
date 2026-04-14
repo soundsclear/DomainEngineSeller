@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Inbox } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { EmptyState } from '@/components/EmptyState'
 import { SectionCard } from '@/components/SectionCard'
+import { SkeletonRow } from '@/components/Skeleton'
+import { useToast } from '@/components/Toast'
 import { createDealFromInquiry, fetchInboundInquiries, type InboundInquiryRecord } from '@/lib/api'
 import { formatCurrency } from '@/lib/formatters'
 import type { ClosingMethod } from '@/types/domain'
@@ -27,9 +31,9 @@ export function InboxPage() {
   const [loaded, setLoaded] = useState(false)
   const [filter, setFilter] = useState<InquiryFilter>('all')
   const [closingMethodById, setClosingMethodById] = useState<Record<string, ClosingMethod>>({})
-  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const toast = useToast()
 
-  useEffect(() => {
+  function load() {
     let active = true
 
     fetchInboundInquiries()
@@ -54,22 +58,35 @@ export function InboxPage() {
     return () => {
       active = false
     }
-  }, [])
+  }
+
+  useEffect(load, [])
 
   const filteredItems = useMemo(() => {
-    if (filter === 'all') {
-      return items
-    }
-
+    if (filter === 'all') return items
     return items.filter((item) => item.inquiryType === filter)
   }, [filter, items])
 
-  if (error) {
-    return <SectionCard title="Inbox" subtitle="Kon de inbound inquiries niet laden.">{error}</SectionCard>
+  if (!loaded) {
+    return (
+      <SectionCard title="Inbound inbox">
+        <div className="space-y-2">
+          {[...Array(4)].map((_, i) => <SkeletonRow key={i} />)}
+        </div>
+      </SectionCard>
+    )
   }
 
-  if (!loaded) {
-    return <SectionCard title="Inbox" subtitle="Inbox laden...">Even geduld.</SectionCard>
+  if (error) {
+    return (
+      <div
+        className="flex items-center justify-between rounded-xl px-4 py-3 text-[14px]"
+        style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border-soft)', borderLeft: '3px solid var(--color-destructive)' }}
+      >
+        <span style={{ color: 'var(--color-text)' }}>Failed to load inbox: {error}</span>
+        <button onClick={load} className="ml-4 text-[13px] font-medium hover:underline" style={{ color: 'var(--color-accent)' }}>Retry</button>
+      </div>
+    )
   }
 
   return (
@@ -84,10 +101,11 @@ export function InboxPage() {
               key={value}
               type="button"
               onClick={() => setFilter(value)}
-              className={
+              className="rounded-lg px-4 py-2 text-[14px] transition-colors"
+              style={
                 filter === value
-                  ? 'rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white'
-                  : 'rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700'
+                  ? { backgroundColor: 'var(--color-accent)', color: '#ffffff' }
+                  : { border: '1px solid var(--color-border)', color: 'var(--color-text)', backgroundColor: 'var(--color-surface)' }
               }
             >
               {value === 'all' ? 'All' : value === 'offer' ? 'Offers' : 'Contacts'}
@@ -97,52 +115,64 @@ export function InboxPage() {
       </SectionCard>
 
       {filteredItems.length === 0 ? (
-        <SectionCard title="No inquiries yet" subtitle="Nieuwe inbound berichten verschijnen hier automatisch.">
-          Geen inbound inquiries gevonden voor dit filter.
-        </SectionCard>
+        <EmptyState
+          icon={Inbox}
+          title="No inquiries"
+          description="Nieuwe inbound berichten verschijnen hier automatisch."
+        />
       ) : (
         <div className="grid gap-4">
           {filteredItems.map((item) => (
-            <article key={item.id} className="rounded-[28px] border border-white/80 bg-white p-5 shadow-sm">
+            <article
+              key={item.id}
+              className="rounded-xl p-5"
+              style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border-soft)' }}
+            >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs uppercase tracking-[0.2em] text-emerald-700">
+                    <p className="text-xs uppercase tracking-[0.2em]" style={{ color: 'var(--color-accent-text)' }}>
                       {item.inquiryType === 'offer' ? 'Offer' : 'Contact'}
                     </p>
                     {item.status === 'new' ? (
-                      <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs text-white">Nieuw</span>
+                      <span className="rounded-full px-2 py-0.5 text-xs text-white" style={{ backgroundColor: 'var(--color-text)' }}>Nieuw</span>
                     ) : null}
                     {item.classification ? (
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${CLASSIFICATION_COLORS[item.classification] ?? 'bg-slate-100 text-slate-700'}`}
-                      >
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CLASSIFICATION_COLORS[item.classification] ?? 'bg-slate-100 text-slate-700'}`}>
                         {CLASSIFICATION_LABELS[item.classification] ?? item.classification}
                       </span>
                     ) : null}
                   </div>
                   <Link to={`/admin/inbox/${item.id}`}>
-                    <h2 className="mt-2 text-xl font-semibold text-slate-950 hover:text-emerald-800">
+                    <h2 className="mt-2 text-xl font-semibold hover:underline" style={{ color: 'var(--color-text)' }}>
                       {item.senderName ?? item.senderEmail}
                     </h2>
                   </Link>
-                  <p className="mt-1 text-sm text-slate-600">{item.senderEmail}</p>
+                  <p className="mt-1 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{item.senderEmail}</p>
                 </div>
                 <div className="text-right">
-                  {item.offerAmount ? <p className="text-lg font-medium text-slate-950">{formatCurrency(item.offerAmount)}</p> : null}
-                  <p className="mt-1 text-xs uppercase text-slate-500">{new Date(item.createdAt).toLocaleString('nl-NL')}</p>
+                  {item.offerAmount ? (
+                    <p className="text-lg font-medium" style={{ color: 'var(--color-text)' }}>{formatCurrency(item.offerAmount)}</p>
+                  ) : null}
+                  <p className="mt-1 text-xs uppercase" style={{ color: 'var(--color-text-secondary)' }}>
+                    {new Date(item.createdAt).toLocaleString('nl-NL')}
+                  </p>
                 </div>
               </div>
 
-              <p className="mt-4 text-sm leading-6 text-slate-700">{item.message}</p>
+              <p className="mt-4 text-sm leading-6" style={{ color: 'var(--color-text-secondary)' }}>{item.message}</p>
 
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
-                <div className="text-sm text-slate-600">
-                  <span className="font-medium text-slate-900">{item.domainName ?? 'Unknown domain'}</span>
+              <div
+                className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-4"
+                style={{ borderTop: '1px solid var(--color-border-soft)' }}
+              >
+                <div className="text-sm">
+                  <span className="font-medium" style={{ color: 'var(--color-text)' }}>{item.domainName ?? 'Unknown domain'}</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <select
-                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900"
+                    className="rounded-lg px-3 py-2 text-[14px]"
+                    style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}
                     value={closingMethodById[item.id] ?? 'escrow_com'}
                     onChange={(event) =>
                       setClosingMethodById((current) => ({
@@ -161,17 +191,22 @@ export function InboxPage() {
                     onClick={async () => {
                       try {
                         const response = await createDealFromInquiry(item.id, closingMethodById[item.id] ?? 'escrow_com')
-                        setActionMessage(`Deal ${response.dealId} created from inquiry ${item.id}.`)
+                        toast.show(`Deal ${response.dealId} created.`, 'success')
                       } catch (err) {
-                        setActionMessage(err instanceof Error ? err.message : 'Kon geen deal aanmaken.')
+                        toast.show(err instanceof Error ? err.message : 'Kon geen deal aanmaken.', 'error')
                       }
                     }}
-                    className="rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white"
+                    className="rounded-lg px-4 py-2 text-[14px] text-white"
+                    style={{ backgroundColor: 'var(--color-accent)' }}
                   >
                     Create deal
                   </button>
                   {item.domainName ? (
-                    <Link className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-900 hover:bg-slate-50" to="/admin/deals">
+                    <Link
+                      className="rounded-lg px-4 py-2 text-[14px] hover:bg-[#f5f5f7]"
+                      style={{ border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                      to="/admin/deals"
+                    >
                       Open deals
                     </Link>
                   ) : null}
@@ -181,11 +216,6 @@ export function InboxPage() {
           ))}
         </div>
       )}
-      {actionMessage ? (
-        <SectionCard title="Last action" subtitle="Result of the most recent inbox action.">
-          {actionMessage}
-        </SectionCard>
-      ) : null}
     </div>
   )
 }

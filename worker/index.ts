@@ -17,7 +17,9 @@ import {
   markOutreachWorkflowSent,
   saveOutreachWorkflow,
 } from '../src/server/db/outreach-repository'
+import { getSetting, listSettings, upsertSetting } from '../src/server/db/settings-repository'
 import { countInboundInquiries, listInboundInquiries, saveInboundInquiry, getInquiryWithThread, updateInquiryStatus, updateInquiryClassification, saveReplyDraft, saveNegotiationDraft, type NegotiationDraftPayload } from '../src/server/db/inquiry-repository'
+import { runApifyContactEnrichment } from '../src/server/ai/apify-contact-enrichment'
 import { classifyInquiry, draftReply, negotiateCounter, type InquiryClassification } from '../src/server/ai/inquiry-intelligence'
 import { createAnthropicClientFromEnv } from '../src/server/ai/anthropic'
 import { createDealFromInquiry, getDeal, listDeals, progressDeal } from '../src/server/db/deal-repository'
@@ -40,6 +42,13 @@ import {
   upsertDomainPageContent,
 } from '../src/server/db/public-domain-repository'
 import { getLeadById, listLeadsForDomain } from '../src/server/db/lead-repository'
+import {
+  completeLeadEnrichmentRun,
+  createLeadEnrichmentRun,
+  failLeadEnrichmentRun,
+  getLeadEnrichmentSummary,
+  listLeadEnrichmentSummariesForDomain,
+} from '../src/server/db/lead-enrichment-repository'
 import { discoverAndStoreBuyerLeads } from '../src/server/ai/buyer-discovery'
 import { generateAndStoreDomainSeoContent } from '../src/server/ai/seo-generation'
 import { sendInquiryNotification, sendOutreachEmail, sendTestEmail } from '../src/server/email'
@@ -54,6 +63,10 @@ type Bindings = {
   ADMIN_NOTIFY_EMAIL: string
   EMAIL_FROM_ADDRESS: string
   TEST_EMAIL_OVERRIDE?: string
+  TURNSTILE_SECRET_KEY?: string
+  APIFY_API_TOKEN?: string
+  APIFY_CONTACT_SCRAPER_ACTOR_ID?: string
+  OUTREACH_CONTACT_ENABLED?: string
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -92,11 +105,106 @@ function requireOutreachEmailConfig(env: Bindings) {
   }
 }
 
+function parseTruthyFlag(value: string | undefined) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase())
+}
+
+async function getOutreachAutoSendDailyLimit(binding: D1Database) {
+  const setting = await getSetting(binding, 'OUTREACH_DAILY_LIMIT')
+  const rawValue = setting?.value
+
+  if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+    return Math.max(0, Math.floor(rawValue))
+  }
+
+  if (typeof rawValue === 'string') {
+    const parsed = Number(rawValue)
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.floor(parsed))
+    }
+  }
+
+  return 10
+}
+
+async function getBooleanSetting(
+  binding: D1Database,
+  key: string,
+  fallback: boolean,
+) {
+  const setting = await getSetting(binding, key)
+  const rawValue = setting?.value
+
+  if (typeof rawValue !== 'string') {
+    return fallback
+  }
+
+  return parseTruthyFlag(rawValue)
+}
+
+async function isContactSendingEnabled(binding: D1Database, env: Bindings) {
+  if (typeof env.OUTREACH_CONTACT_ENABLED === 'string') {
+    return parseTruthyFlag(env.OUTREACH_CONTACT_ENABLED)
+  }
+
+  return getBooleanSetting(binding, 'OUTREACH_CONTACT_ENABLED', false)
+}
+
+async function getPublicTurnstileSiteKey(binding: D1Database) {
+  const setting = await getSetting(binding, 'TURNSTILE_SITE_KEY')
+  return typeof setting?.value === 'string' && setting.value.trim() ? setting.value.trim() : null
+}
+
+async function getTurnstileSecret(binding: D1Database, env: Bindings) {
+  if (env.TURNSTILE_SECRET_KEY?.trim()) {
+    return env.TURNSTILE_SECRET_KEY.trim()
+  }
+
+  const setting = await getSetting(binding, 'TURNSTILE_SECRET_KEY')
+  return typeof setting?.value === 'string' && setting.value.trim() ? setting.value.trim() : null
+}
+
+async function verifyTurnstileToken(
+  binding: D1Database,
+  env: Bindings,
+  token: string | undefined,
+) {
+  const secret = await getTurnstileSecret(binding, env)
+
+  if (!secret) {
+    return true
+  }
+
+  if (!token) {
+    return false
+  }
+
+  const form = new FormData()
+  form.set('secret', secret)
+  form.set('response', token)
+
+  const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+    method: 'POST',
+    body: form,
+  })
+
+  if (!response.ok) {
+    return false
+  }
+
+  const payload = (await response.json()) as { success?: boolean }
+  return payload.success === true
+}
+
 async function sendApprovedOutreachWorkflow(
   binding: D1Database,
   env: Bindings,
   threadId: string,
 ) {
+  if (!(await isContactSendingEnabled(binding, env))) {
+    throw new Error('Contact sending is disabled in this environment.')
+  }
+
   const workflow = await getOutreachWorkflowByThreadId(binding, threadId)
 
   if (!workflow) {
@@ -109,6 +217,10 @@ async function sendApprovedOutreachWorkflow(
 
   if (workflow.thread.status !== 'approved_to_send') {
     throw new Error('Outreach workflow must be approved before sending.')
+  }
+
+  if (workflow.lead.doNotContact) {
+    throw new Error('Lead is marked do-not-contact.')
   }
 
   if (!workflow.lead.contactEmail) {
@@ -127,6 +239,85 @@ async function sendApprovedOutreachWorkflow(
   return updated
 }
 
+export interface ScheduledOutreachAutoSendResult {
+  enabled: boolean
+  dailyLimit: number
+  considered: number
+  sent: number
+  failed: number
+  skipped: number
+  skippedReason: string | null
+}
+
+export async function runScheduledOutreachAutoSend(
+  binding: D1Database,
+  env: Bindings,
+): Promise<ScheduledOutreachAutoSendResult> {
+  if (!(await isContactSendingEnabled(binding, env))) {
+    return {
+      enabled: false,
+      dailyLimit: 0,
+      considered: 0,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      skippedReason: 'Contact sending is disabled in this environment.',
+    }
+  }
+
+  if (!parseTruthyFlag(env.OUTREACH_AUTO_SEND_ENABLED)) {
+    return {
+      enabled: false,
+      dailyLimit: 0,
+      considered: 0,
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      skippedReason: 'OUTREACH_AUTO_SEND_ENABLED is disabled.',
+    }
+  }
+
+  const dailyLimit = await getOutreachAutoSendDailyLimit(binding)
+  const suppressUnsubscribed = await getBooleanSetting(
+    binding,
+    'GDPR_SUPPRESS_UNSUBSCRIBED',
+    true,
+  )
+  const candidates = (await listSendableApprovedOutreachWorkflows(binding))
+    .filter(
+      (workflow) =>
+        workflow.thread.autoSendEnabled &&
+        (suppressUnsubscribed ? !workflow.lead.doNotContact : true),
+    )
+    .sort((left, right) => Date.parse(left.thread.createdAt) - Date.parse(right.thread.createdAt))
+
+  const items = candidates.slice(0, dailyLimit)
+  let sent = 0
+  let failed = 0
+
+  for (const workflow of items) {
+    try {
+      const updated = await sendApprovedOutreachWorkflow(binding, env, workflow.thread.id)
+      if (updated) {
+        sent += 1
+      }
+    } catch (error) {
+      failed += 1
+      console.error('Scheduled outreach auto-send failed:', error)
+    }
+  }
+
+  return {
+    enabled: true,
+    dailyLimit,
+    considered: candidates.length,
+    sent,
+    failed,
+    skipped: Math.max(0, candidates.length - items.length),
+    skippedReason: null,
+  }
+}
+
 // --- Zod schemas ---
 
 const inquiryInputSchema = z.object({
@@ -135,6 +326,7 @@ const inquiryInputSchema = z.object({
   senderEmail: z.string().email(),
   offerAmount: z.coerce.number().int().positive().optional(),
   message: z.string().min(10),
+  cfTurnstileToken: z.string().optional(),
 })
 
 const outreachDraftRequestSchema = z.object({
@@ -163,6 +355,14 @@ const progressDealSchema = z.object({
 
 const outreachBatchSendSchema = z.object({
   threadIds: z.array(z.string().min(1)).optional().default([]),
+})
+
+const leadEnrichmentBatchSchema = z.object({
+  leadIds: z.array(z.string().min(1)).min(1).max(20),
+})
+
+const settingValueSchema = z.object({
+  value: z.any(),
 })
 
 const createDomainSchema = z.object({
@@ -262,6 +462,31 @@ app.get('/api/public/domains/:domainId', async (c) => {
   return c.json(item)
 })
 
+app.get('/api/public/config', async (c) => {
+  const turnstileSiteKey = await getPublicTurnstileSiteKey(c.env.DB)
+  return c.json({ turnstileSiteKey })
+})
+
+// --- Settings ---
+
+app.get('/api/settings', async (c) => {
+  const items = await listSettings(c.env.DB)
+  return c.json({ items })
+})
+
+app.put('/api/settings/:key', zValidator('json', settingValueSchema), async (c) => {
+  try {
+    const item = await upsertSetting(
+      c.env.DB,
+      c.req.param('key'),
+      String(c.req.valid('json').value ?? ''),
+    )
+    return c.json({ ok: true, item })
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Could not update setting.' }, 400)
+  }
+})
+
 // Import must be registered before :domainId to avoid route conflict
 app.post('/api/domains/import', zValidator('json', csvImportSchema), async (c) => {
   const { rows } = c.req.valid('json')
@@ -319,6 +544,149 @@ app.put('/api/domains/:domainId/page-content', zValidator('json', domainPageCont
 app.get('/api/domains/:domainId/leads', async (c) => {
   const items = await listLeadsForDomain(c.env.DB, c.req.param('domainId'))
   return c.json({ items })
+})
+
+app.get('/api/domains/:domainId/lead-enrichment', async (c) => {
+  const items = await listLeadEnrichmentSummariesForDomain(c.env.DB, c.req.param('domainId'))
+  return c.json({ items })
+})
+
+app.post('/api/domains/:domainId/leads/:leadId/enrich-contacts', async (c) => {
+  const domainId = c.req.param('domainId')
+  const leadId = c.req.param('leadId')
+  const lead = await getLeadById(c.env.DB, leadId)
+
+  if (!lead || lead.domainId !== domainId) {
+    return c.json({ error: 'Lead not found for this domain.' }, 404)
+  }
+
+  if (!lead.website) {
+    return c.json({ error: 'Lead has no website to enrich.' }, 400)
+  }
+
+  const token = c.env.APIFY_API_TOKEN?.trim() || (await getSetting(c.env.DB, 'APIFY_API_TOKEN'))?.value?.trim()
+  const actorId =
+    c.env.APIFY_CONTACT_SCRAPER_ACTOR_ID?.trim() ||
+    (await getSetting(c.env.DB, 'APIFY_CONTACT_SCRAPER_ACTOR_ID'))?.value?.trim() ||
+    'poidata/contact-details-scraper'
+
+  if (!token) {
+    return c.json({ error: 'Apify is not configured. Set APIFY_API_TOKEN.' }, 400)
+  }
+
+  const run = await createLeadEnrichmentRun(c.env.DB, {
+    leadId,
+    provider: 'apify',
+    actorId,
+    sourceWebsite: lead.website,
+  })
+
+  try {
+    const result = await runApifyContactEnrichment({
+      website: lead.website,
+      actorId,
+      token,
+    })
+
+    const summary = await completeLeadEnrichmentRun(c.env.DB, {
+      runId: run.id,
+      contacts: result.contacts,
+      rawPayloadJson: JSON.stringify(result.rawItems),
+    })
+
+    return c.json({
+      ok: true,
+      item: summary,
+      meta: {
+        provider: result.provider,
+        actorId: result.actorId,
+        website: result.website,
+        contactsFound: result.contacts.length,
+      },
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not enrich lead contacts.'
+    await failLeadEnrichmentRun(c.env.DB, { runId: run.id, errorMessage: message })
+    return c.json({ error: message }, 400)
+  }
+})
+
+app.post('/api/domains/:domainId/lead-enrichment/run', zValidator('json', leadEnrichmentBatchSchema), async (c) => {
+  const domainId = c.req.param('domainId')
+  const requestedLeadIds = c.req.valid('json').leadIds
+  const results: Array<{
+    leadId: string
+    ok: boolean
+    contactsFound?: number
+    error?: string
+  }> = []
+
+  for (const leadId of requestedLeadIds) {
+    const lead = await getLeadById(c.env.DB, leadId)
+    if (!lead || lead.domainId !== domainId) {
+      results.push({ leadId, ok: false, error: 'Lead not found for this domain.' })
+      continue
+    }
+
+    if (!lead.website) {
+      results.push({ leadId, ok: false, error: 'Lead has no website to enrich.' })
+      continue
+    }
+
+    const token =
+      c.env.APIFY_API_TOKEN?.trim() || (await getSetting(c.env.DB, 'APIFY_API_TOKEN'))?.value?.trim()
+    const actorId =
+      c.env.APIFY_CONTACT_SCRAPER_ACTOR_ID?.trim() ||
+      (await getSetting(c.env.DB, 'APIFY_CONTACT_SCRAPER_ACTOR_ID'))?.value?.trim() ||
+      'poidata/contact-details-scraper'
+
+    if (!token) {
+      return c.json({ error: 'Apify is not configured. Set APIFY_API_TOKEN.' }, 400)
+    }
+
+    const run = await createLeadEnrichmentRun(c.env.DB, {
+      leadId,
+      provider: 'apify',
+      actorId,
+      sourceWebsite: lead.website,
+    })
+
+    try {
+      const result = await runApifyContactEnrichment({
+        website: lead.website,
+        actorId,
+        token,
+      })
+
+      await completeLeadEnrichmentRun(c.env.DB, {
+        runId: run.id,
+        contacts: result.contacts,
+        rawPayloadJson: JSON.stringify(result.rawItems),
+      })
+
+      results.push({
+        leadId,
+        ok: true,
+        contactsFound: result.contacts.length,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not enrich lead contacts.'
+      await failLeadEnrichmentRun(c.env.DB, { runId: run.id, errorMessage: message })
+      results.push({ leadId, ok: false, error: message })
+    }
+  }
+
+  const items = await listLeadEnrichmentSummariesForDomain(c.env.DB, domainId)
+  return c.json({
+    ok: true,
+    items,
+    summary: {
+      requested: requestedLeadIds.length,
+      succeeded: results.filter((item) => item.ok).length,
+      failed: results.filter((item) => !item.ok).length,
+      results,
+    },
+  })
 })
 
 app.post(
@@ -429,6 +797,7 @@ app.post(
           id: lead.id,
           companyName: lead.companyName,
           contactName: lead.companyName,
+          doNotContact: lead.doNotContact,
         },
         domain: {
           id: domain.id,
@@ -636,7 +1005,18 @@ app.get('/api/inquiries', async (c) => {
 
 app.post('/api/inquiries', zValidator('json', inquiryInputSchema), async (c) => {
   try {
-    const saved = await saveInboundInquiry(c.env.DB, c.req.valid('json'))
+    const payload = c.req.valid('json')
+    const turnstileValid = await verifyTurnstileToken(
+      c.env.DB,
+      c.env,
+      payload.cfTurnstileToken,
+    )
+
+    if (!turnstileValid) {
+      return c.json({ error: 'CAPTCHA verification failed.' }, 400)
+    }
+
+    const saved = await saveInboundInquiry(c.env.DB, payload)
 
     const apiKey = c.env.RESEND_API_KEY
     const to = c.env.ADMIN_NOTIFY_EMAIL
@@ -976,4 +1356,11 @@ app.get('/api/metrics/dashboard', async (c) => {
   return c.json({ metrics })
 })
 
-export default app
+const worker = {
+  fetch: app.fetch.bind(app),
+  scheduled: async (_controller: ScheduledController, env: Bindings, _ctx: ExecutionContext) => {
+    await runScheduledOutreachAutoSend(env.DB, env)
+  },
+}
+
+export default worker

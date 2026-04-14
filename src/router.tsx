@@ -9,6 +9,7 @@ import { InboxPage } from './pages/InboxPage'
 import { InquiryThreadPage } from './pages/InquiryThreadPage'
 import { LeadsPage } from './pages/LeadsPage'
 import { LoginPage } from './pages/LoginPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { PublicDomainPage } from './pages/PublicDomainPage'
 import { PublicPortfolioPage } from './pages/PublicPortfolioPage'
 import { publicDomainLoader, publicPortfolioLoader } from './pages/public-loaders'
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
       { path: 'admin/domains', element: <DomainsPage /> },
       { path: 'admin/domains/:domainId', element: <DomainDetailPage /> },
       { path: 'admin/leads', element: <LeadsPage /> },
+      { path: 'admin/settings', element: <SettingsPage /> },
     ],
   },
 ])

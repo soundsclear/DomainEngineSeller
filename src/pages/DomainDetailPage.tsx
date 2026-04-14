@@ -7,18 +7,13 @@ import {
   fetchDomain,
   fetchDomainLeads,
   fetchDomainPageContent,
-  fetchOutreachWorkflows,
-  generateDomainLeadOutreachDraft,
   generateDomainPageContentApi,
-  saveDomainLeadOutreachWorkflow,
   triggerBuyerDiscoveryApi,
   updateDomainApi,
   updateDomainPageContentApi,
   type CreateDomainPayload,
   type DomainLeadRecord,
-  type DomainLeadOutreachDraftResponse,
   type DomainPageContentPayload,
-  type OutreachWorkflowRecord,
   type PriceRecommendationSummary,
 } from '@/lib/api'
 import { resolveDomainPageContent, type DomainPageContentRecord } from '@/lib/domain-page-content'
@@ -27,6 +22,23 @@ import type { DomainRecord } from '@/types/domain'
 
 type EditForm = Partial<Omit<CreateDomainPayload, 'domainName' | 'tld'>>
 type ContentForm = DomainPageContentPayload
+type LeadEnrichmentScope = 'lead' | 'batch'
+type LeadEnrichmentStatus = 'idle' | 'loading' | 'done' | 'error'
+
+interface LeadEnrichmentProgress {
+  status: LeadEnrichmentStatus
+  summary: string | null
+  updatedAt: number | null
+  scope: LeadEnrichmentScope | null
+}
+
+interface LeadEnrichmentRun {
+  scope: LeadEnrichmentScope
+  leadIds: string[]
+  status: Exclude<LeadEnrichmentStatus, 'idle'>
+  summary: string
+  at: number
+}
 
 export function DomainDetailPage() {
   const { domainId } = useParams()
@@ -49,22 +61,19 @@ export function DomainDetailPage() {
   const [buyerDiscoveryMessage, setBuyerDiscoveryMessage] = useState<string | null>(null)
   const [buyerDiscoveryError, setBuyerDiscoveryError] = useState<string | null>(null)
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
-  const [senderName, setSenderName] = useState('Jan Seller')
-  const [senderEmail, setSenderEmail] = useState('jan@dse.example')
-  const [outreachTone, setOutreachTone] = useState<'concise' | 'standard' | 'detailed'>('standard')
-  const [leadDraftState, setLeadDraftState] = useState<DomainLeadOutreachDraftResponse | null>(null)
-  const [leadDraftLoading, setLeadDraftLoading] = useState(false)
-  const [leadDraftError, setLeadDraftError] = useState<string | null>(null)
-  const [leadSaveLoading, setLeadSaveLoading] = useState(false)
-  const [leadSaveMessage, setLeadSaveMessage] = useState<string | null>(null)
-  const [outreachWorkflows, setOutreachWorkflows] = useState<OutreachWorkflowRecord[]>([])
+  const [leadEnrichmentLoadingId, setLeadEnrichmentLoadingId] = useState<string | null>(null)
+  const [batchEnrichmentLoading, setBatchEnrichmentLoading] = useState(false)
+  const [leadEnrichmentError, setLeadEnrichmentError] = useState<string | null>(null)
+  const [leadEnrichmentMessage, setLeadEnrichmentMessage] = useState<string | null>(null)
+  const [leadEnrichmentProgressById, setLeadEnrichmentProgressById] = useState<Record<string, LeadEnrichmentProgress>>({})
+  const [leadEnrichmentRuns, setLeadEnrichmentRuns] = useState<LeadEnrichmentRun[]>([])
 
   useEffect(() => {
     if (missingDomainId) return
     let active = true
 
-    Promise.all([fetchDomain(domainId), fetchDomainPageContent(domainId), fetchDomainLeads(domainId), fetchOutreachWorkflows()])
-      .then(([domainResponse, contentResponse, leadResponse, workflowResponse]) => {
+    Promise.all([fetchDomain(domainId), fetchDomainPageContent(domainId), fetchDomainLeads(domainId)])
+      .then(([domainResponse, contentResponse, leadResponse]) => {
         if (!active) {
           return
         }
@@ -75,9 +84,6 @@ export function DomainDetailPage() {
         setLeads(leadResponse.items)
         setSelectedLeadId((current) => current ?? leadResponse.items[0]?.id ?? null)
         setContentForm(toContentForm(domainResponse.item, contentResponse.item))
-        setOutreachWorkflows(
-          workflowResponse.items.filter((workflow) => workflow.domain.id === domainResponse.item.id),
-        )
         setError(null)
       })
       .catch((err: Error) => {
@@ -212,6 +218,127 @@ export function DomainDetailPage() {
     }
   }
 
+  async function runLeadEnrichment(leadIds: string[], scope: LeadEnrichmentScope) {
+    if (!domainId || leadIds.length === 0) return
+
+    const startedAt = Date.now()
+    const endpoint = `/api/domains/${domainId}/leads/enrich`
+    const loadingSummary = `Contactgegevens ophalen voor ${leadIds.length} lead${leadIds.length === 1 ? '' : 's'}...`
+
+    setLeadEnrichmentError(null)
+    setLeadEnrichmentMessage(null)
+    setLeadEnrichmentProgressById((current) => {
+      const next = { ...current }
+      for (const leadId of leadIds) {
+        next[leadId] = {
+          status: 'loading',
+          summary: loadingSummary,
+          updatedAt: startedAt,
+          scope,
+        }
+      }
+      return next
+    })
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          leadIds,
+          enrichmentOnly: true,
+          allowContacting: false,
+        }),
+      })
+
+      const body = (await response.json().catch(() => null)) as unknown
+      if (!response.ok) {
+        throw new Error(extractLeadEnrichmentError(body) ?? 'Could not run lead enrichment.')
+      }
+
+      const summary = summarizeLeadEnrichmentResult(body, leadIds.length)
+      const refreshedLeads = await fetchDomainLeads(domainId)
+
+      setLeadEnrichmentProgressById((current) => {
+        const next = { ...current }
+        for (const leadId of leadIds) {
+          next[leadId] = {
+            status: 'done',
+            summary,
+            updatedAt: Date.now(),
+            scope,
+          }
+        }
+        return next
+      })
+
+      setLeadEnrichmentRuns((current) => [
+        {
+          scope,
+          leadIds,
+          status: 'done',
+          summary,
+          at: Date.now(),
+        },
+        ...current,
+      ])
+      setLeadEnrichmentMessage(summary)
+      setLeads(refreshedLeads.items)
+      setSelectedLeadId((current) => current ?? refreshedLeads.items[0]?.id ?? null)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not run lead enrichment.'
+
+      setLeadEnrichmentProgressById((current) => {
+        const next = { ...current }
+        for (const leadId of leadIds) {
+          next[leadId] = {
+            status: 'error',
+            summary: message,
+            updatedAt: Date.now(),
+            scope,
+          }
+        }
+        return next
+      })
+
+      setLeadEnrichmentRuns((current) => [
+        {
+          scope,
+          leadIds,
+          status: 'error',
+          summary: message,
+          at: Date.now(),
+        },
+        ...current,
+      ])
+      setLeadEnrichmentError(message)
+    }
+  }
+
+  async function handleLeadEnrichment(leadId: string) {
+    setSelectedLeadId(leadId)
+    setLeadEnrichmentLoadingId(leadId)
+    try {
+      await runLeadEnrichment([leadId], 'lead')
+    } finally {
+      setLeadEnrichmentLoadingId(null)
+    }
+  }
+
+  async function handleBatchEnrichment() {
+    const candidateIds = leads.filter((lead) => lead.website && !lead.doNotContact).map((lead) => lead.id)
+    if (candidateIds.length === 0) return
+
+    setBatchEnrichmentLoading(true)
+    try {
+      await runLeadEnrichment(candidateIds, 'batch')
+    } finally {
+      setBatchEnrichmentLoading(false)
+    }
+  }
+
   if (missingDomainId) {
     return (
       <SectionCard title="Domain detail" subtitle="Geen domein geselecteerd.">
@@ -234,63 +361,6 @@ export function DomainDetailPage() {
         Even geduld.
       </SectionCard>
     )
-  }
-
-  const selectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null
-
-  async function handleGenerateLeadDraft(leadId: string) {
-    if (!domainId) return
-
-    setSelectedLeadId(leadId)
-    setLeadDraftLoading(true)
-    setLeadDraftError(null)
-    setLeadSaveMessage(null)
-
-    try {
-      const response = await generateDomainLeadOutreachDraft(domainId, leadId, {
-        sender: {
-          name: senderName,
-          email: senderEmail,
-        },
-        tone: outreachTone,
-        outreachCount: 0,
-        autoSendEnabled: false,
-        dailyLimit: 10,
-      })
-      setLeadDraftState(response)
-    } catch (err) {
-      setLeadDraftError(err instanceof Error ? err.message : 'Could not generate outreach draft.')
-      setLeadDraftState(null)
-    } finally {
-      setLeadDraftLoading(false)
-    }
-  }
-
-  async function handleSaveLeadWorkflow(leadId: string) {
-    if (!domainId || !leadDraftState?.result.draft || !leadDraftState.result.eligible) return
-
-    setLeadSaveLoading(true)
-    setLeadDraftError(null)
-    setLeadSaveMessage(null)
-
-    try {
-      const response = await saveDomainLeadOutreachWorkflow(domainId, leadId, {
-        sender: {
-          name: senderName,
-          email: senderEmail,
-        },
-        tone: outreachTone,
-        outreachCount: 0,
-        autoSendEnabled: false,
-        dailyLimit: 10,
-      })
-      setOutreachWorkflows((current) => [response.item, ...current.filter((item) => item.thread.id !== response.item.thread.id)])
-      setLeadSaveMessage('Draft opgeslagen als outreach workflow.')
-    } catch (err) {
-      setLeadDraftError(err instanceof Error ? err.message : 'Could not save outreach workflow.')
-    } finally {
-      setLeadSaveLoading(false)
-    }
   }
 
   return (
@@ -535,63 +605,57 @@ export function DomainDetailPage() {
         </SectionCard>
 
         <SectionCard
-          title="Potential buyers"
-          subtitle="Run a broad discovery pass and store unique company leads for this domain."
+          title="Buyer discovery + enrichment"
+          subtitle="Discovery blijft research-only; enrichment haalt publieke contactgegevens op zonder iets te versturen."
         >
           <div className="space-y-4">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+              <p className="font-medium">Enrichment only</p>
+              <p className="mt-1 text-amber-950/80">
+                Deze sectie zoekt alleen publieke contactgegevens op bij bestaande leads. Er worden geen mails
+                verstuurd en er is geen send-flow aan deze pagina gekoppeld.
+              </p>
+            </div>
+
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
               <div>
                 <p className="font-medium text-slate-900">{leads.length} opgeslagen leads</p>
-                <p className="mt-1">Buyer discovery gebruikt Anthropic voor redenering en Brave voor web search.</p>
+                <p className="mt-1">
+                  Buyer discovery gebruikt Anthropic voor redenering en Brave voor web search. Enrichment zoekt
+                  daarna contactgegevens op publieke websites.
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => void handleBuyerDiscovery()}
-                disabled={buyerDiscoveryLoading}
-                className="rounded-full bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
-              >
-                {buyerDiscoveryLoading ? 'Searching...' : 'Find buyers'}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleBatchEnrichment()}
+                  disabled={batchEnrichmentLoading || leads.filter((lead) => lead.website && !lead.doNotContact).length === 0}
+                  className="rounded-full bg-emerald-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+                >
+                  {batchEnrichmentLoading ? 'Enriching...' : 'Enrich all leads'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleBuyerDiscovery()}
+                  disabled={buyerDiscoveryLoading}
+                  className="rounded-full border border-slate-300 px-4 py-2 text-sm text-slate-900 disabled:opacity-60"
+                >
+                  {buyerDiscoveryLoading ? 'Searching...' : 'Find buyers'}
+                </button>
+              </div>
             </div>
             {buyerDiscoveryError ? <p className="text-sm text-rose-700">{buyerDiscoveryError}</p> : null}
             {buyerDiscoveryMessage ? <p className="text-sm text-emerald-700">{buyerDiscoveryMessage}</p> : null}
-            <div className="grid gap-4 md:grid-cols-3">
-              <label className="space-y-2 text-sm text-slate-700 md:col-span-1">
-                <span>Sender name</span>
-                <input
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2"
-                  value={senderName}
-                  onChange={(event) => setSenderName(event.target.value)}
-                />
-              </label>
-              <label className="space-y-2 text-sm text-slate-700 md:col-span-1">
-                <span>Sender email</span>
-                <input
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2"
-                  value={senderEmail}
-                  onChange={(event) => setSenderEmail(event.target.value)}
-                />
-              </label>
-              <label className="space-y-2 text-sm text-slate-700 md:col-span-1">
-                <span>Tone</span>
-                <select
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2"
-                  value={outreachTone}
-                  onChange={(event) => setOutreachTone(event.target.value as 'concise' | 'standard' | 'detailed')}
-                >
-                  <option value="concise">Concise</option>
-                  <option value="standard">Standard</option>
-                  <option value="detailed">Detailed</option>
-                </select>
-              </label>
-            </div>
             {leads.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500">
                 Nog geen buyer discovery leads voor dit domein.
               </div>
             ) : (
               <div className="space-y-3">
-                {leads.map((lead) => (
+                {leads.map((lead) => {
+                  const progress = leadEnrichmentProgressById[lead.id] ?? null
+
+                  return (
                   <article
                     key={lead.id}
                     className={
@@ -623,101 +687,58 @@ export function DomainDetailPage() {
                       <span>{lead.source ?? 'manual'}</span>
                       {lead.country ? <span>{lead.country}</span> : null}
                       {lead.doNotContact ? <span>do not contact</span> : null}
+                      <span>
+                        {(progress?.status ?? (lead.contactEmail || lead.contactName ? 'done' : 'idle'))
+                          .replace('loading', 'enriching')
+                          .replace('done', 'enriched')
+                          .replace('error', 'failed')}
+                      </span>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => void handleGenerateLeadDraft(lead.id)}
-                        disabled={leadDraftLoading}
-                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+                        onClick={() => void handleLeadEnrichment(lead.id)}
+                        disabled={leadEnrichmentLoadingId === lead.id || batchEnrichmentLoading}
+                        className="rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white disabled:opacity-60"
                       >
-                        {leadDraftLoading && selectedLeadId === lead.id ? 'Generating...' : 'Generate outreach draft'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveLeadWorkflow(lead.id)}
-                        disabled={
-                          leadSaveLoading ||
-                          selectedLeadId !== lead.id ||
-                          !leadDraftState?.result.draft ||
-                          !leadDraftState.result.eligible
-                        }
-                        className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-900 disabled:opacity-60"
-                      >
-                        {leadSaveLoading && selectedLeadId === lead.id ? 'Saving...' : 'Save to workflow'}
+                        {leadEnrichmentLoadingId === lead.id ? 'Enriching...' : 'Enrich contact data'}
                       </button>
                     </div>
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                      <p className="font-medium text-slate-900">Contact snapshot</p>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <Detail label="Contact name" value={lead.contactName ?? 'Not found yet'} />
+                        <Detail label="Contact email" value={lead.contactEmail ?? 'Not found yet'} />
+                      </div>
+                      <p className="mt-3 text-slate-600">
+                        {progress?.summary ??
+                          'Run enrichment to look for public contact details on the company website and related pages.'}
+                      </p>
+                    </div>
                   </article>
-                ))}
+                  )
+                })}
               </div>
             )}
 
-            {leadDraftError ? <p className="text-sm text-rose-700">{leadDraftError}</p> : null}
-            {leadSaveMessage ? <p className="text-sm text-emerald-700">{leadSaveMessage}</p> : null}
+            {leadEnrichmentError ? <p className="text-sm text-rose-700">{leadEnrichmentError}</p> : null}
+            {leadEnrichmentMessage ? <p className="text-sm text-emerald-700">{leadEnrichmentMessage}</p> : null}
 
-            {selectedLead && leadDraftState && selectedLead.id === leadDraftState.lead.id ? (
-              <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
-                <div
-                  className={
-                    leadDraftState.result.eligible
-                      ? 'rounded-xl bg-emerald-50 p-4 text-sm text-emerald-900'
-                      : 'rounded-xl bg-amber-50 p-4 text-sm text-amber-900'
-                  }
-                >
-                  <p className="font-medium">
-                    {leadDraftState.lead.companyName} · {leadDraftState.domain.domainName}
-                  </p>
-                  <p className="mt-1">{leadDraftState.result.reason}</p>
-                </div>
-
-                {leadDraftState.result.draft ? (
-                  <>
-                    <div className="grid gap-3 md:grid-cols-3">
-                      <Detail label="Sequence" value={leadDraftState.result.draft.sequenceStep.replaceAll('_', ' ')} />
-                      <Detail label="Language" value={leadDraftState.result.draft.language} />
-                      <Detail
-                        label="Next follow-up"
-                        value={
-                          leadDraftState.result.draft.recommendedFollowUpDays == null
-                            ? 'No follow-up needed'
-                            : `${leadDraftState.result.draft.recommendedFollowUpDays} days`
-                        }
-                      />
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Subject</p>
-                      <p className="mt-2 text-sm font-medium text-slate-900">
-                        {leadDraftState.result.draft.subject}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Draft body</p>
-                      <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                        {leadDraftState.result.draft.body}
-                      </pre>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            ) : null}
-
-            {outreachWorkflows.length > 0 ? (
+            {leadEnrichmentRuns.length > 0 ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-medium text-slate-900">Saved outreach workflows</p>
+                <p className="text-sm font-medium text-slate-900">Recent enrichment runs</p>
                 <div className="mt-3 space-y-3">
-                  {outreachWorkflows.map((workflow) => (
-                    <article key={workflow.thread.id} className="rounded-xl bg-white p-4">
+                  {leadEnrichmentRuns.slice(0, 4).map((run) => (
+                    <article key={`${run.scope}-${run.at}-${run.leadIds.join('-')}`} className="rounded-xl bg-white p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-medium text-slate-900">
-                            {workflow.lead.companyName} · {workflow.draft.sequenceStep.replaceAll('_', ' ')}
+                            {run.scope === 'batch' ? 'Batch enrichment' : 'Single lead enrichment'}
                           </p>
-                          <p className="mt-1 text-sm text-slate-600">{workflow.message.subject}</p>
+                          <p className="mt-1 text-sm text-slate-600">{run.summary}</p>
                         </div>
-                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
-                          {workflow.followupTask.dueAt
-                            ? `Follow-up ${new Date(workflow.followupTask.dueAt).toLocaleDateString('nl-NL')}`
-                            : 'Final step'}
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                          {new Date(run.at).toLocaleString('nl-NL')}
                         </span>
                       </div>
                     </article>
@@ -754,3 +775,73 @@ function Detail({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
+
+function summarizeLeadEnrichmentResult(payload: unknown, leadCount: number) {
+  const record = isRecord(payload) ? payload : {}
+  const meta = isRecord(record.meta) ? record.meta : {}
+  const items = Array.isArray(record.items) ? record.items : []
+  const enrichedCount =
+    readNumber(meta.enrichedCount) ??
+    readNumber(meta.enriched) ??
+    readNumber(meta.created) ??
+    readNumber(record.enrichedCount) ??
+    (items.length > 0 ? items.length : null)
+  const skippedCount = readNumber(meta.skipped) ?? readNumber(record.skippedCount) ?? readNumber(record.skipped)
+  const contactCount =
+    readNumber(meta.contactCount) ??
+    readNumber(meta.contactsFound) ??
+    readNumber(record.contactCount) ??
+    readNumber(record.contactsFound)
+  const message = readString(record.message) ?? readString(meta.message) ?? readString(record.summary)
+
+  const parts: string[] = []
+
+  if (enrichedCount != null) {
+    parts.push(`${enrichedCount} lead${enrichedCount === 1 ? '' : 's'} verrijkt`)
+  }
+  if (contactCount != null && contactCount > 0) {
+    parts.push(`${contactCount} contact${contactCount === 1 ? '' : 'en'} gevonden`)
+  }
+  if (skippedCount != null && skippedCount > 0) {
+    parts.push(`${skippedCount} overgeslagen`)
+  }
+
+  if (parts.length === 0 && message) {
+    parts.push(message)
+  }
+
+  if (parts.length === 0) {
+    parts.push(`Enrichment voor ${leadCount} lead${leadCount === 1 ? '' : 's'} afgerond`)
+  }
+
+  return `${parts.join(', ')}.`
+}
+
+function extractLeadEnrichmentError(payload: unknown) {
+  const record = isRecord(payload) ? payload : {}
+  const meta = isRecord(record.meta) ? record.meta : {}
+
+  return readString(record.error) ?? readString(record.message) ?? readString(meta.error) ?? readString(meta.message)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function readNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  return null
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null
+}
+

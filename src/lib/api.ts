@@ -51,6 +51,7 @@ export interface InquiryPayload {
   senderEmail: string
   offerAmount?: number
   message: string
+  cfTurnstileToken?: string
 }
 
 export interface DomainPageContentPayload {
@@ -609,4 +610,22 @@ export interface RealDashboardMetrics {
 
 export function fetchDashboardMetrics() {
   return fetchJson<{ metrics: RealDashboardMetrics }>('/api/metrics/dashboard')
+}
+
+export interface SettingRecord {
+  id: string
+  key: string
+  value: string
+  updatedAt: number
+}
+
+export function fetchSettings() {
+  return fetchJson<{ items: SettingRecord[] }>('/api/settings')
+}
+
+export function updateSetting(key: string, value: string) {
+  return fetchJson<{ ok: true; item: SettingRecord }>(`/api/settings/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  })
 }

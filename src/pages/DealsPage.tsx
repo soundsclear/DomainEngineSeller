@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { BadgeEuro } from 'lucide-react'
+import { EmptyState } from '@/components/EmptyState'
 import { SectionCard } from '@/components/SectionCard'
+import { SkeletonRow } from '@/components/Skeleton'
+import { useToast } from '@/components/Toast'
 import { fetchDeals, fetchTransferTasks, generateStripeInvoicePayload, progressDeal, type DealViewRecord, type StripeInvoicePayloadResponse, type TransferTaskRecord } from '@/lib/api'
 import type { XelTransferPackage } from '@/lib/xel-transfer'
 
@@ -16,8 +20,9 @@ export function DealsPage() {
   const [invoiceBuyerEmail, setInvoiceBuyerEmail] = useState('')
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
   const [invoicePayload, setInvoicePayload] = useState<StripeInvoicePayloadResponse['payload'] | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const toast = useToast()
 
   useEffect(() => {
     let active = true
@@ -33,11 +38,13 @@ export function DealsPage() {
             setPaymentSecured(first.paymentSecured)
             setBuyerApprovalState(first.buyerApprovalState ?? 'pending')
           }
+          setLoaded(true)
         }
       })
       .catch((err: Error) => {
         if (active) {
           setError(err.message)
+          setLoaded(true)
         }
       })
 
@@ -78,10 +85,9 @@ export function DealsPage() {
         const task = response.decision.transferTask
         setTransferTasks((current) => [task, ...current])
       }
-      setMessage(response.decision.decision.reason)
-      setError(null)
+      toast.show(response.decision.decision.reason, 'success')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Kon de dealstatus niet bijwerken.')
+      toast.show(err instanceof Error ? err.message : 'Kon de dealstatus niet bijwerken.', 'error')
     }
   }
 
@@ -95,19 +101,46 @@ export function DealsPage() {
         currency: 'EUR',
       })
       setInvoicePayload(response.payload)
-      setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not generate invoice payload.')
+      toast.show(err instanceof Error ? err.message : 'Could not generate invoice payload.', 'error')
     }
+  }
+
+  if (!loaded) {
+    return (
+      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <SectionCard title="Deals">
+          {[...Array(3)].map((_, i) => <SkeletonRow key={i} />)}
+        </SectionCard>
+        <SectionCard title="Deal progression">
+          {[...Array(4)].map((_, i) => <SkeletonRow key={i} />)}
+        </SectionCard>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div
+        className="flex items-center justify-between rounded-xl px-4 py-3 text-[14px]"
+        style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border-soft)', borderLeft: '3px solid var(--color-destructive)' }}
+      >
+        <span style={{ color: 'var(--color-text)' }}>Failed to load deals: {error}</span>
+      </div>
+    )
   }
 
   return (
     <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
       <SectionCard title="Deals" subtitle="Offers en inbound leads die zijn doorgezet naar een closing workflow.">
         {deals.length === 0 ? (
-          <div className="text-sm text-slate-500">Nog geen deals beschikbaar.</div>
+          <EmptyState
+            icon={BadgeEuro}
+            title="No active deals"
+            description="Convert an inquiry to a deal to start tracking negotiations."
+          />
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {deals.map((deal) => (
               <button
                 key={deal.id}
@@ -122,21 +155,20 @@ export function DealsPage() {
                   setBuyerRegistrar('')
                   setInvoiceBuyerEmail('')
                   setInvoicePayload(null)
-                  setMessage(null)
-                  setError(null)
                 }}
-                className={
+                className="w-full rounded-lg p-4 text-left transition-colors"
+                style={
                   deal.id === selectedDealId
-                    ? 'w-full rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-left'
-                    : 'w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-left'
+                    ? { border: '1px solid var(--color-accent)', backgroundColor: 'var(--color-accent-light)' }
+                    : { border: '1px solid var(--color-border-soft)', backgroundColor: 'var(--color-bg)' }
                 }
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="text-base font-medium text-slate-950">{deal.domainName ?? 'Unknown domain'}</h3>
-                    <p className="mt-1 text-sm text-slate-600">{deal.companyName ?? 'Unknown buyer'}</p>
+                    <h3 className="text-[15px] font-medium" style={{ color: 'var(--color-text)' }}>{deal.domainName ?? 'Unknown domain'}</h3>
+                    <p className="mt-1 text-[13px]" style={{ color: 'var(--color-text-secondary)' }}>{deal.companyName ?? 'Unknown buyer'}</p>
                   </div>
-                  <span className="rounded-lg bg-white px-3 py-1 text-xs font-medium uppercase text-emerald-800">
+                  <span className="rounded-full px-2.5 py-0.5 text-[11px] font-medium uppercase" style={{ backgroundColor: 'var(--color-accent-light)', color: 'var(--color-accent-text)' }}>
                     {deal.status.replaceAll('_', ' ')}
                   </span>
                 </div>
@@ -149,55 +181,56 @@ export function DealsPage() {
       <SectionCard title="Deal progression" subtitle="Werk de closing state bij en laat de beslislogica de volgende status bepalen.">
         {selectedDeal ? (
           <div className="space-y-4">
-            <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
-              <p className="font-medium text-slate-900">{selectedDeal.domainName}</p>
-              <p className="mt-1">{selectedDeal.companyName ?? 'Unknown buyer'} · {selectedDeal.closingMethod.replaceAll('_', ' ')}</p>
+            <div className="rounded-lg p-4 text-[14px]" style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text)' }}>
+              <p className="font-medium">{selectedDeal.domainName}</p>
+              <p className="mt-1 text-[13px]" style={{ color: 'var(--color-text-secondary)' }}>{selectedDeal.companyName ?? 'Unknown buyer'} · {selectedDeal.closingMethod.replaceAll('_', ' ')}</p>
             </div>
 
-            <label className="flex items-center gap-3 text-sm text-slate-700">
+            <label className="flex items-center gap-3 text-[14px]" style={{ color: 'var(--color-text)' }}>
               <input type="checkbox" checked={paymentSecured} onChange={(event) => setPaymentSecured(event.target.checked)} />
               Payment secured
             </label>
-            <label className="flex items-center gap-3 text-sm text-slate-700">
+            <label className="flex items-center gap-3 text-[14px]" style={{ color: 'var(--color-text)' }}>
               <input type="checkbox" checked={buyerUsesXel} onChange={(event) => setBuyerUsesXel(event.target.checked)} />
               Buyer uses Xel
             </label>
             {buyerUsesXel ? (
-              <label className="space-y-2 text-sm text-slate-700">
+              <label className="space-y-2 text-[14px]" style={{ color: 'var(--color-text)' }}>
                 <span>Buyer Xel account</span>
-                <input className="w-full rounded-lg border border-slate-200 px-3 py-2" value={buyerXelAccount} onChange={(event) => setBuyerXelAccount(event.target.value)} />
+                <input className="w-full rounded-lg px-3 py-2" style={{ border: '1px solid var(--color-border)' }} value={buyerXelAccount} onChange={(event) => setBuyerXelAccount(event.target.value)} />
               </label>
             ) : (
-              <label className="space-y-2 text-sm text-slate-700">
+              <label className="space-y-2 text-[14px]" style={{ color: 'var(--color-text)' }}>
                 <span>Buyer registrar</span>
-                <input className="w-full rounded-lg border border-slate-200 px-3 py-2" value={buyerRegistrar} onChange={(event) => setBuyerRegistrar(event.target.value)} />
+                <input className="w-full rounded-lg px-3 py-2" style={{ border: '1px solid var(--color-border)' }} value={buyerRegistrar} onChange={(event) => setBuyerRegistrar(event.target.value)} />
               </label>
             )}
-            <label className="flex items-center gap-3 text-sm text-slate-700">
+            <label className="flex items-center gap-3 text-[14px]" style={{ color: 'var(--color-text)' }}>
               <input type="checkbox" checked={explicitInvoiceTransferApproval} onChange={(event) => setExplicitInvoiceTransferApproval(event.target.checked)} />
               Explicit invoice transfer approval
             </label>
-            <label className="space-y-2 text-sm text-slate-700">
+            <label className="space-y-2 text-[14px]" style={{ color: 'var(--color-text)' }}>
               <span>Buyer approval state</span>
-              <select className="w-full rounded-lg border border-slate-200 px-3 py-2" value={buyerApprovalState} onChange={(event) => setBuyerApprovalState(event.target.value as 'pending' | 'approved' | 'disputed')}>
+              <select className="w-full rounded-lg px-3 py-2" style={{ border: '1px solid var(--color-border)' }} value={buyerApprovalState} onChange={(event) => setBuyerApprovalState(event.target.value as 'pending' | 'approved' | 'disputed')}>
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
                 <option value="disputed">Disputed</option>
               </select>
             </label>
 
-            <button type="button" onClick={handleProgress} className="rounded-lg bg-emerald-900 px-4 py-2 text-white">
+            <button type="button" onClick={handleProgress} className="rounded-lg px-4 py-2 text-[14px] text-white" style={{ backgroundColor: 'var(--color-accent)' }}>
               Update deal status
             </button>
 
             {selectedDeal.closingMethod === 'stripe_invoice_manual_transfer' && (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-                <p className="text-sm font-medium text-slate-900">Generate Stripe invoice payload</p>
-                <label className="space-y-2 text-sm text-slate-700">
+              <div className="rounded-lg p-4 space-y-3" style={{ border: '1px solid var(--color-border-soft)', backgroundColor: 'var(--color-bg)' }}>
+                <p className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>Generate Stripe invoice payload</p>
+                <label className="space-y-2 text-[14px]" style={{ color: 'var(--color-text)' }}>
                   <span>Buyer email</span>
                   <input
                     type="email"
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 bg-white"
+                    className="w-full rounded-lg px-3 py-2"
+                    style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)' }}
                     placeholder="buyer@example.com"
                     value={invoiceBuyerEmail}
                     onChange={(event) => setInvoiceBuyerEmail(event.target.value)}
@@ -207,23 +240,21 @@ export function DealsPage() {
                   type="button"
                   disabled={!explicitInvoiceTransferApproval || !invoiceBuyerEmail}
                   onClick={handleGenerateInvoice}
-                  className="rounded-lg bg-indigo-700 px-4 py-2 text-white disabled:opacity-40"
+                  className="rounded-lg px-4 py-2 text-[14px] text-white disabled:opacity-40"
+                  style={{ backgroundColor: 'var(--color-accent)' }}
                 >
                   Generate invoice payload
                 </button>
                 {!explicitInvoiceTransferApproval && (
-                  <p className="text-xs text-slate-500">Enable "Explicit invoice transfer approval" above to unlock.</p>
+                  <p className="text-[12px]" style={{ color: 'var(--color-text-secondary)' }}>Enable "Explicit invoice transfer approval" above to unlock.</p>
                 )}
                 {invoicePayload ? (
-                  <pre className="mt-2 overflow-x-auto rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-800">
+                  <pre className="mt-2 overflow-x-auto rounded-lg p-3 text-[12px]" style={{ border: '1px solid var(--color-border-soft)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}>
                     {JSON.stringify(invoicePayload, null, 2)}
                   </pre>
                 ) : null}
               </div>
             )}
-
-            {message ? <div className="rounded-lg bg-emerald-50 p-4 text-sm text-emerald-900">{message}</div> : null}
-            {error ? <div className="rounded-lg bg-rose-50 p-4 text-sm text-rose-900">{error}</div> : null}
           </div>
         ) : (
           <div className="text-sm text-slate-500">Selecteer een deal.</div>

@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Users } from 'lucide-react'
+import { EmptyState } from '@/components/EmptyState'
 import { SectionCard } from '@/components/SectionCard'
+import { SkeletonRow } from '@/components/Skeleton'
+import { useToast } from '@/components/Toast'
 import {
   approveOutreachWorkflow,
   batchSendOutreachWorkflows,
@@ -14,6 +18,9 @@ import type { OutreachDraft } from '@/lib/outreach-draft'
 import type { LeadRecord } from '@/types/domain'
 
 type QueueFilter = 'all' | 'draft' | 'approved' | 'sent' | 'blocked'
+
+const OUTREACH_SEND_LOCKED = true
+const OUTREACH_SEND_LOCK_MESSAGE = 'Contact outreach is hard locked for now. Drafts and enrichment are allowed, but approve/send actions stay disabled until we lift the lock.'
 
 interface DraftState {
   eligible: boolean
@@ -53,25 +60,19 @@ export function LeadsPage() {
   const [outreachCount, setOutreachCount] = useState(0)
   const [draftState, setDraftState] = useState<DraftState | null>(null)
   const [draftLoading, setDraftLoading] = useState(false)
-  const [draftError, setDraftError] = useState<string | null>(null)
   const [saveLoading, setSaveLoading] = useState(false)
-  const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [queueFilter, setQueueFilter] = useState<QueueFilter>('all')
   const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>([])
   const [workflowActionLoadingId, setWorkflowActionLoadingId] = useState<string | null>(null)
   const [batchSendLoading, setBatchSendLoading] = useState(false)
-  const [queueMessage, setQueueMessage] = useState<string | null>(null)
-  const [queueError, setQueueError] = useState<string | null>(null)
+  const toast = useToast()
 
-  useEffect(() => {
+  function load() {
     let active = true
 
     Promise.all([fetchLeads(), fetchOutreachWorkflows()])
       .then(([leadResponse, workflowResponse]) => {
-        if (!active) {
-          return
-        }
-
+        if (!active) return
         setLeads(leadResponse.items)
         setSelectedLeadId(leadResponse.items[0]?.id ?? null)
         setWorkflows(workflowResponse.items)
@@ -87,7 +88,9 @@ export function LeadsPage() {
     return () => {
       active = false
     }
-  }, [])
+  }
+
+  useEffect(load, [])
 
   const selectedLead = useMemo(
     () => leads.find((lead) => lead.id === selectedLeadId) ?? null,
@@ -172,9 +175,11 @@ export function LeadsPage() {
 
   const selectedSendableIds = useMemo(
     () =>
-      selectedWorkflowIds.filter((threadId) =>
-        queueRows.some((row) => row.workflow.thread.id === threadId && row.status === 'approved'),
-      ),
+      OUTREACH_SEND_LOCKED
+        ? []
+        : selectedWorkflowIds.filter((threadId) =>
+            queueRows.some((row) => row.workflow.thread.id === threadId && row.status === 'approved'),
+          ),
     [queueRows, selectedWorkflowIds],
   )
 
@@ -184,21 +189,13 @@ export function LeadsPage() {
   }
 
   async function handleGenerateDraft() {
-    if (!selectedLead) {
-      return
-    }
+    if (!selectedLead) return
 
     setDraftLoading(true)
-    setDraftError(null)
-    setSaveMessage(null)
-    setQueueMessage(null)
 
     try {
       const response = await generateLeadOutreachDraft(selectedLead.id, {
-        sender: {
-          name: senderName,
-          email: senderEmail,
-        },
+        sender: { name: senderName, email: senderEmail },
         tone,
         outreachCount,
         autoSendEnabled: false,
@@ -213,7 +210,7 @@ export function LeadsPage() {
         companyName: response.lead.companyName,
       })
     } catch (err) {
-      setDraftError(err instanceof Error ? err.message : 'Kon het outreach concept niet genereren.')
+      toast.show(err instanceof Error ? err.message : 'Kon het outreach concept niet genereren.', 'error')
       setDraftState(null)
     } finally {
       setDraftLoading(false)
@@ -221,21 +218,13 @@ export function LeadsPage() {
   }
 
   async function handleSaveWorkflow() {
-    if (!selectedLead || !draftState?.draft) {
-      return
-    }
+    if (!selectedLead || !draftState?.draft) return
 
     setSaveLoading(true)
-    setDraftError(null)
-    setSaveMessage(null)
-    setQueueMessage(null)
 
     try {
       const response = await saveLeadOutreachWorkflow(selectedLead.id, {
-        sender: {
-          name: senderName,
-          email: senderEmail,
-        },
+        sender: { name: senderName, email: senderEmail },
         tone,
         outreachCount,
         autoSendEnabled: false,
@@ -244,55 +233,62 @@ export function LeadsPage() {
 
       setWorkflows((current) => [response.item, ...current.filter((item) => item.thread.id !== response.item.thread.id)])
       setSelectedWorkflowIds((current) => current.filter((threadId) => threadId !== response.item.thread.id))
-      setQueueMessage('Draft opgeslagen als reviewbare outreach workflow.')
+      toast.show('Draft opgeslagen als reviewbare outreach workflow.', 'success')
     } catch (err) {
-      setDraftError(err instanceof Error ? err.message : 'Kon de workflow niet opslaan.')
+      toast.show(err instanceof Error ? err.message : 'Kon de workflow niet opslaan.', 'error')
     } finally {
       setSaveLoading(false)
     }
   }
 
   async function handleApproveWorkflow(threadId: string) {
+    if (OUTREACH_SEND_LOCKED) {
+      toast.show('Approve for send is locked for now. You can still create and save drafts.', 'error')
+      return
+    }
+
     setWorkflowActionLoadingId(threadId)
-    setQueueError(null)
-    setQueueMessage(null)
 
     try {
       const response = await approveOutreachWorkflow(threadId)
-      setQueueMessage(response.message ?? 'Workflow is approved for send.')
+      toast.show(response.message ?? 'Workflow is approved for send.', 'success')
       await refreshWorkflows()
     } catch (err) {
-      setQueueError(err instanceof Error ? err.message : 'Kon de workflow niet goedkeuren.')
+      toast.show(err instanceof Error ? err.message : 'Kon de workflow niet goedkeuren.', 'error')
     } finally {
       setWorkflowActionLoadingId(null)
     }
   }
 
   async function handleSendWorkflow(threadId: string) {
+    if (OUTREACH_SEND_LOCKED) {
+      toast.show('Send now is locked for now. Drafts and enrichment are still available.', 'error')
+      return
+    }
+
     setWorkflowActionLoadingId(threadId)
-    setQueueError(null)
-    setQueueMessage(null)
 
     try {
       const response = await sendOutreachWorkflowNow(threadId)
-      setQueueMessage(response.message ?? 'Workflow is sent.')
+      toast.show(response.message ?? 'Workflow is sent.', 'success')
       setSelectedWorkflowIds((current) => current.filter((selectedId) => selectedId !== threadId))
       await refreshWorkflows()
     } catch (err) {
-      setQueueError(err instanceof Error ? err.message : 'Kon de workflow niet verzenden.')
+      toast.show(err instanceof Error ? err.message : 'Kon de workflow niet verzenden.', 'error')
     } finally {
       setWorkflowActionLoadingId(null)
     }
   }
 
   async function handleBatchSend() {
-    if (selectedSendableIds.length === 0) {
+    if (OUTREACH_SEND_LOCKED) {
+      toast.show('Bulk send is locked for now. Review and draft generation still work.', 'error')
       return
     }
 
+    if (selectedSendableIds.length === 0) return
+
     setBatchSendLoading(true)
-    setQueueError(null)
-    setQueueMessage(null)
 
     try {
       const response = await batchSendOutreachWorkflows(selectedSendableIds)
@@ -300,14 +296,15 @@ export function LeadsPage() {
       const skippedCount = response.skippedCount ?? 0
       const blockedCount = response.blockedCount ?? 0
 
-      setQueueMessage(
+      toast.show(
         response.message ??
           `Batch send completed for ${sentCount} workflow${sentCount === 1 ? '' : 's'}${skippedCount || blockedCount ? ` (${skippedCount} skipped, ${blockedCount} blocked)` : ''}.`,
+        'success',
       )
       setSelectedWorkflowIds([])
       await refreshWorkflows()
     } catch (err) {
-      setQueueError(err instanceof Error ? err.message : 'Kon de batch niet verzenden.')
+      toast.show(err instanceof Error ? err.message : 'Kon de batch niet verzenden.', 'error')
     } finally {
       setBatchSendLoading(false)
     }
@@ -316,12 +313,9 @@ export function LeadsPage() {
   function handleToggleSelected(threadId: string, checked: boolean) {
     setSelectedWorkflowIds((current) => {
       if (checked) {
-        if (current.includes(threadId)) {
-          return current
-        }
+        if (current.includes(threadId)) return current
         return [...current, threadId]
       }
-
       return current.filter((id) => id !== threadId)
     })
   }
@@ -335,37 +329,45 @@ export function LeadsPage() {
     setSelectedWorkflowIds([])
   }
 
-  if (error) {
+  if (!loaded) {
     return (
-      <SectionCard title="Buyer discovery and outreach" subtitle="Kon de leads niet laden.">
-        {error}
+      <SectionCard title="Buyer discovery and outreach">
+        <div className="space-y-2">
+          {[...Array(5)].map((_, i) => <SkeletonRow key={i} />)}
+        </div>
       </SectionCard>
     )
   }
 
-  if (!loaded) {
+  if (error) {
     return (
-      <SectionCard title="Buyer discovery and outreach" subtitle="Leads laden...">
-        Even geduld.
-      </SectionCard>
+      <div
+        className="flex items-center justify-between rounded-xl px-4 py-3 text-[14px]"
+        style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border-soft)', borderLeft: '3px solid var(--color-destructive)' }}
+      >
+        <span style={{ color: 'var(--color-text)' }}>Failed to load leads: {error}</span>
+        <button onClick={load} className="ml-4 text-[13px] font-medium hover:underline" style={{ color: 'var(--color-accent)' }}>Retry</button>
+      </div>
     )
   }
 
   if (leads.length === 0) {
     return (
-      <SectionCard title="Buyer discovery and outreach" subtitle="Nog geen leads beschikbaar.">
-        Voeg buyer discovery records toe om outreach te starten.
-      </SectionCard>
+      <EmptyState
+        icon={Users}
+        title="No leads yet"
+        description="Voeg buyer discovery records toe om outreach te starten."
+      />
     )
   }
 
   return (
     <div className="space-y-6">
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <SectionCard
-          title="Buyer discovery"
-          subtitle="Kies een lead en genereer een conceptmail vanuit de bestaande outreach guardrails."
-        >
+      <SectionCard
+        title="Buyer discovery"
+        subtitle="Kies een lead en genereer een conceptmail vanuit de bestaande outreach guardrails. Contact uitsturen blijft hard geblokkeerd."
+      >
           <div className="space-y-3">
             {leads.map((lead) => {
               const active = lead.id === selectedLeadId
@@ -376,30 +378,31 @@ export function LeadsPage() {
                   type="button"
                   onClick={() => {
                     setSelectedLeadId(lead.id)
-                    setDraftError(null)
                     setDraftState(null)
-                    setSaveMessage(null)
-                    setQueueMessage(null)
                   }}
-                  className={
+                  className="w-full rounded-lg p-4 text-left transition-colors"
+                  style={
                     active
-                      ? 'w-full rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-left'
-                      : 'w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-left'
+                      ? { border: '1px solid var(--color-accent)', backgroundColor: 'var(--color-accent-light)' }
+                      : { border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)' }
                   }
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-base font-medium text-slate-950">{lead.companyName}</h3>
-                      <p className="text-sm text-slate-600">
+                      <h3 className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>{lead.companyName}</h3>
+                      <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
                         {lead.contactName} - {lead.contactEmail}
                       </p>
                     </div>
-                    <span className="rounded-lg bg-white px-3 py-1 text-xs font-medium text-emerald-800">
+                    <span
+                      className="rounded-lg px-3 py-1 text-xs font-medium"
+                      style={{ backgroundColor: 'var(--color-surface)', color: 'var(--color-accent-text)' }}
+                    >
                       Score {lead.priorityScore}
                     </span>
                   </div>
-                  <p className="mt-3 text-sm text-slate-600">{lead.buyerFitReason}</p>
-                  <div className="mt-3 flex items-center justify-between text-xs uppercase text-slate-500">
+                  <p className="mt-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{lead.buyerFitReason}</p>
+                  <div className="mt-3 flex items-center justify-between text-xs uppercase" style={{ color: 'var(--color-text-secondary)' }}>
                     <span>{lead.source}</span>
                     <span>{lead.country}</span>
                   </div>
@@ -409,33 +412,48 @@ export function LeadsPage() {
           </div>
         </SectionCard>
 
-        <SectionCard
-          title="Outreach draft"
-          subtitle="Draft-first workflow: geen verzending, wel een opslaanbare thread, draft message en follow-up taak."
-        >
+      <SectionCard
+        title="Outreach draft"
+        subtitle="Draft-first workflow: enrichment en drafts blijven beschikbaar, maar contactversturen staat hard op slot."
+      >
+          <div
+            className="mb-5 rounded-xl border px-4 py-3 text-[14px]"
+            style={{
+              borderColor: 'var(--color-border)',
+              backgroundColor: 'var(--color-accent-light)',
+              color: 'var(--color-accent-text)',
+            }}
+          >
+            <p className="font-medium">Send lock actief</p>
+            <p className="mt-1">{OUTREACH_SEND_LOCK_MESSAGE}</p>
+          </div>
+
           {selectedLead ? (
             <div className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-2 text-sm text-slate-700">
+                <label className="space-y-2 text-[14px]" style={{ color: 'var(--color-text-secondary)' }}>
                   <span>Sender name</span>
                   <input
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                    className="w-full rounded-lg px-3 py-2 text-[14px]"
+                    style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}
                     value={senderName}
                     onChange={(event) => setSenderName(event.target.value)}
                   />
                 </label>
-                <label className="space-y-2 text-sm text-slate-700">
+                <label className="space-y-2 text-[14px]" style={{ color: 'var(--color-text-secondary)' }}>
                   <span>Sender email</span>
                   <input
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                    className="w-full rounded-lg px-3 py-2 text-[14px]"
+                    style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}
                     value={senderEmail}
                     onChange={(event) => setSenderEmail(event.target.value)}
                   />
                 </label>
-                <label className="space-y-2 text-sm text-slate-700">
+                <label className="space-y-2 text-[14px]" style={{ color: 'var(--color-text-secondary)' }}>
                   <span>Tone</span>
                   <select
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                    className="w-full rounded-lg px-3 py-2 text-[14px]"
+                    style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}
                     value={tone}
                     onChange={(event) => setTone(event.target.value as 'concise' | 'standard' | 'detailed')}
                   >
@@ -444,10 +462,11 @@ export function LeadsPage() {
                     <option value="detailed">Detailed</option>
                   </select>
                 </label>
-                <label className="space-y-2 text-sm text-slate-700">
+                <label className="space-y-2 text-[14px]" style={{ color: 'var(--color-text-secondary)' }}>
                   <span>Sequence step</span>
                   <select
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                    className="w-full rounded-lg px-3 py-2 text-[14px]"
+                    style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}
                     value={String(outreachCount)}
                     onChange={(event) => setOutreachCount(Number(event.target.value))}
                   >
@@ -458,7 +477,10 @@ export function LeadsPage() {
                 </label>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              <div
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg px-4 py-3 text-[14px]"
+                style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-secondary)' }}
+              >
                 <span>
                   {selectedLead.companyName} - {selectedLead.contactName}
                 </span>
@@ -467,7 +489,8 @@ export function LeadsPage() {
                     type="button"
                     onClick={handleGenerateDraft}
                     disabled={draftLoading}
-                    className="rounded-lg bg-emerald-900 px-4 py-2 text-white disabled:opacity-60"
+                    className="rounded-lg px-4 py-2 text-[14px] text-white disabled:opacity-60"
+                    style={{ backgroundColor: 'var(--color-accent)' }}
                   >
                     {draftLoading ? 'Generating...' : 'Generate draft'}
                   </button>
@@ -475,23 +498,26 @@ export function LeadsPage() {
                     type="button"
                     onClick={handleSaveWorkflow}
                     disabled={saveLoading || !draftState?.draft || !draftState.eligible}
-                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 disabled:opacity-60"
+                    className="rounded-lg px-4 py-2 text-[14px] disabled:opacity-60"
+                    style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}
                   >
                     {saveLoading ? 'Saving...' : 'Save to workflow'}
                   </button>
                 </div>
               </div>
 
-              {draftError ? <p className="text-sm text-rose-700">{draftError}</p> : null}
-              {saveMessage ? <p className="text-sm text-emerald-700">{saveMessage}</p> : null}
-
               {draftState ? (
                 <div className="space-y-4">
                   <div
                     className={
                       draftState.eligible
-                        ? 'rounded-lg bg-emerald-50 p-4 text-sm text-emerald-900'
-                        : 'rounded-lg bg-amber-50 p-4 text-sm text-amber-900'
+                        ? 'rounded-lg p-4 text-[14px]'
+                        : 'rounded-lg bg-amber-50 p-4 text-[14px] text-amber-900'
+                    }
+                    style={
+                      draftState.eligible
+                        ? { backgroundColor: 'var(--color-accent-light)', color: 'var(--color-accent-text)' }
+                        : undefined
                     }
                   >
                     <p className="font-medium">
@@ -515,27 +541,36 @@ export function LeadsPage() {
                         />
                       </div>
 
-                      <div className="rounded-lg border border-slate-200 bg-white p-4">
-                        <p className="text-xs uppercase text-slate-500">Subject</p>
-                        <p className="mt-2 text-sm font-medium text-slate-950">{draftState.draft.subject}</p>
+                      <div
+                        className="rounded-lg p-4"
+                        style={{ border: '1px solid var(--color-border-soft)', backgroundColor: 'var(--color-surface)' }}
+                      >
+                        <p className="text-xs uppercase" style={{ color: 'var(--color-text-secondary)' }}>Subject</p>
+                        <p className="mt-2 text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>{draftState.draft.subject}</p>
                       </div>
 
-                      <div className="rounded-lg border border-slate-200 bg-white p-4">
-                        <p className="text-xs uppercase text-slate-500">Body</p>
-                        <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-800">
+                      <div
+                        className="rounded-lg p-4"
+                        style={{ border: '1px solid var(--color-border-soft)', backgroundColor: 'var(--color-surface)' }}
+                      >
+                        <p className="text-xs uppercase" style={{ color: 'var(--color-text-secondary)' }}>Body</p>
+                        <pre className="mt-3 whitespace-pre-wrap text-sm leading-6" style={{ color: 'var(--color-text-secondary)' }}>
                           {draftState.draft.body}
                         </pre>
                       </div>
 
-                      <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
-                        <p className="font-medium text-slate-900">Personalisation tokens</p>
+                      <div className="rounded-lg p-4 text-[14px]" style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-secondary)' }}>
+                        <p className="font-medium" style={{ color: 'var(--color-text)' }}>Personalisation tokens</p>
                         <p className="mt-2">{draftState.draft.personalizationTokensUsed.join(', ')}</p>
                       </div>
                     </>
                   ) : null}
                 </div>
               ) : (
-                <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500">
+                <div
+                  className="rounded-lg px-4 py-6 text-[14px]"
+                  style={{ border: '1px dashed var(--color-border)', color: 'var(--color-text-secondary)' }}
+                >
                   Genereer een concept om de outreach copy voor deze lead te bekijken.
                 </div>
               )}
@@ -546,13 +581,16 @@ export function LeadsPage() {
 
       <SectionCard
         title="Outreach queue"
-        subtitle="Review eerst de drafts, keur ze goed, en gebruik alleen approved items voor send-now of batch-send."
+        subtitle="Review eerst de drafts. Approve, send-now en batch-send blijven disabled totdat we de lock expliciet opheffen."
       >
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl p-4 text-[14px]"
+            style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-secondary)' }}
+          >
             <div>
-              <p className="font-medium text-slate-900">Guarded send queue</p>
-              <p className="mt-1">Drafts need approval before send. Blocked items can never be sent.</p>
+              <p className="font-medium" style={{ color: 'var(--color-text)' }}>Guarded send queue</p>
+              <p className="mt-1">{OUTREACH_SEND_LOCK_MESSAGE}</p>
             </div>
             <div className="flex flex-wrap gap-2 text-xs font-medium uppercase tracking-[0.12em]">
               <QueuePill label="Drafts" value={queueCounts.draft} />
@@ -564,18 +602,19 @@ export function LeadsPage() {
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap gap-2">
-              {QUEUE_FILTERS.map((filter) => (
+              {QUEUE_FILTERS.map((f) => (
                 <button
-                  key={filter.key}
+                  key={f.key}
                   type="button"
-                  onClick={() => setQueueFilter(filter.key)}
-                  className={
-                    queueFilter === filter.key
-                      ? 'rounded-full bg-slate-900 px-4 py-2 text-sm text-white'
-                      : 'rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-700'
+                  onClick={() => setQueueFilter(f.key)}
+                  className="rounded-full px-4 py-2 text-[14px] transition-colors"
+                  style={
+                    queueFilter === f.key
+                      ? { backgroundColor: 'var(--color-text)', color: '#ffffff' }
+                      : { border: '1px solid var(--color-border)', color: 'var(--color-text)' }
                   }
                 >
-                  {filter.label}
+                  {f.label}
                 </button>
               ))}
             </div>
@@ -583,8 +622,9 @@ export function LeadsPage() {
               <button
                 type="button"
                 onClick={handleSelectAllVisibleApproved}
-                disabled={visibleQueueRows.every((row) => !row.canSelect)}
-                className="rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-700 disabled:opacity-50"
+                disabled={OUTREACH_SEND_LOCKED || visibleQueueRows.every((row) => !row.canSelect)}
+                className="rounded-full px-4 py-2 text-[14px] disabled:opacity-50"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
               >
                 Select approved ({visibleQueueRows.filter((row) => row.canSelect).length})
               </button>
@@ -592,26 +632,28 @@ export function LeadsPage() {
                 type="button"
                 onClick={handleClearSelection}
                 disabled={selectedWorkflowIds.length === 0}
-                className="rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-700 disabled:opacity-50"
+                className="rounded-full px-4 py-2 text-[14px] disabled:opacity-50"
+                style={{ border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
               >
                 Clear selection
               </button>
               <button
                 type="button"
                 onClick={handleBatchSend}
-                disabled={batchSendLoading || selectedSendableIds.length === 0}
-                className="rounded-full bg-emerald-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+                disabled={OUTREACH_SEND_LOCKED || batchSendLoading || selectedSendableIds.length === 0}
+                className="rounded-full px-4 py-2 text-[14px] text-white disabled:opacity-60"
+                style={{ backgroundColor: 'var(--color-accent)' }}
               >
-                {batchSendLoading ? 'Sending...' : `Send selected (${selectedSendableIds.length})`}
+                {batchSendLoading ? 'Sending...' : OUTREACH_SEND_LOCKED ? 'Send locked' : `Send selected (${selectedSendableIds.length})`}
               </button>
             </div>
           </div>
 
-          {queueError ? <p className="text-sm text-rose-700">{queueError}</p> : null}
-          {queueMessage ? <p className="text-sm text-emerald-700">{queueMessage}</p> : null}
-
           {visibleQueueRows.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500">
+            <div
+              className="rounded-lg px-4 py-6 text-[14px]"
+              style={{ border: '1px dashed var(--color-border)', color: 'var(--color-text-secondary)' }}
+            >
               Geen workflows in deze statusfilter.
             </div>
           ) : (
@@ -622,20 +664,24 @@ export function LeadsPage() {
                 const loading = workflowActionLoadingId === row.workflow.thread.id
 
                 return (
-                  <article key={row.workflow.thread.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <article
+                    key={row.workflow.thread.id}
+                    className="rounded-lg p-4"
+                    style={{ border: '1px solid var(--color-border-soft)', backgroundColor: 'var(--color-bg)' }}
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <h3 className="text-base font-medium text-slate-950">
+                        <h3 className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>
                           {row.workflow.lead.companyName} - {row.workflow.domain.domainName}
                         </h3>
-                        <p className="mt-1 text-sm text-slate-600">{row.workflow.message.subject}</p>
+                        <p className="mt-1 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{row.workflow.message.subject}</p>
                       </div>
                       <StatusChip tone={statusMeta.tone} label={statusMeta.label} />
                     </div>
 
-                    <p className="mt-3 text-sm text-slate-600">{statusMeta.description}</p>
+                    <p className="mt-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{statusMeta.description}</p>
 
-                    <div className="mt-3 grid gap-3 text-sm text-slate-700 md:grid-cols-4">
+                    <div className="mt-3 grid gap-3 text-[14px] md:grid-cols-4" style={{ color: 'var(--color-text-secondary)' }}>
                       <QueueMeta label="Contact" value={row.workflow.lead.contactName} />
                       <QueueMeta
                         label="Follow-up due"
@@ -654,10 +700,11 @@ export function LeadsPage() {
 
                     <div className="mt-4 flex flex-wrap items-center gap-3">
                       {row.canSelect ? (
-                        <label className="flex items-center gap-2 text-sm text-slate-700">
+                        <label className="flex items-center gap-2 text-[14px]" style={{ color: 'var(--color-text-secondary)' }}>
                           <input
                             type="checkbox"
                             checked={isSelected}
+                            disabled={OUTREACH_SEND_LOCKED}
                             onChange={(event) => handleToggleSelected(row.workflow.thread.id, event.target.checked)}
                           />
                           Include in batch send
@@ -668,10 +715,11 @@ export function LeadsPage() {
                         <button
                           type="button"
                           onClick={() => void handleApproveWorkflow(row.workflow.thread.id)}
-                          disabled={loading}
-                          className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm text-slate-900 disabled:opacity-60"
+                          disabled={loading || OUTREACH_SEND_LOCKED}
+                          className="rounded-full px-4 py-2 text-[14px] disabled:opacity-60"
+                          style={{ border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}
                         >
-                          {loading ? 'Approving...' : 'Approve for send'}
+                          {loading ? 'Approving...' : OUTREACH_SEND_LOCKED ? 'Approve locked' : 'Approve for send'}
                         </button>
                       ) : null}
 
@@ -679,15 +727,19 @@ export function LeadsPage() {
                         <button
                           type="button"
                           onClick={() => void handleSendWorkflow(row.workflow.thread.id)}
-                          disabled={loading}
-                          className="rounded-full bg-emerald-900 px-4 py-2 text-sm text-white disabled:opacity-60"
+                          disabled={loading || OUTREACH_SEND_LOCKED}
+                          className="rounded-full px-4 py-2 text-[14px] text-white disabled:opacity-60"
+                          style={{ backgroundColor: 'var(--color-accent)' }}
                         >
-                          {loading ? 'Sending...' : 'Send now'}
+                          {loading ? 'Sending...' : OUTREACH_SEND_LOCKED ? 'Send locked' : 'Send now'}
                         </button>
                       ) : null}
 
                       {row.status === 'sent' ? (
-                        <span className="rounded-full bg-white px-3 py-2 text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
+                        <span
+                          className="rounded-full px-3 py-2 text-xs font-medium uppercase tracking-[0.12em]"
+                          style={{ backgroundColor: 'var(--color-surface)', color: 'var(--color-text-secondary)' }}
+                        >
                           Sent
                         </span>
                       ) : null}
@@ -705,7 +757,7 @@ export function LeadsPage() {
 
 function getQueueStatusMeta(row: QueueRowState): {
   label: string
-  tone: 'emerald' | 'amber' | 'slate' | 'rose'
+  tone: 'accent' | 'amber' | 'slate' | 'rose'
   description: string
 } {
   if (row.status === 'blocked') {
@@ -719,8 +771,10 @@ function getQueueStatusMeta(row: QueueRowState): {
   if (row.status === 'approved') {
     return {
       label: 'Approved',
-      tone: 'emerald',
-      description: 'Approved and eligible for send-now or batch-send.',
+      tone: 'accent',
+      description: OUTREACH_SEND_LOCKED
+        ? 'Approved in review, but sending is hard locked for now.'
+        : 'Approved and eligible for send-now or batch-send.',
     }
   }
 
@@ -735,45 +789,66 @@ function getQueueStatusMeta(row: QueueRowState): {
   return {
     label: 'Draft',
     tone: 'amber',
-    description: 'Draft prepared. Review it first, then approve before any send action.',
+    description: OUTREACH_SEND_LOCKED
+      ? 'Draft prepared. Review and save are available, but approval and send stay locked.'
+      : 'Draft prepared. Review it first, then approve before any send action.',
   }
 }
 
 function QueuePill({ label, value }: { label: string; value: number }) {
   return (
-    <span className="rounded-full bg-white px-3 py-2 text-slate-700">
+    <span
+      className="rounded-full px-3 py-2"
+      style={{ backgroundColor: 'var(--color-surface)', color: 'var(--color-text-secondary)' }}
+    >
       {label} {value}
     </span>
   )
 }
 
-function StatusChip({ label, tone }: { label: string; tone: 'emerald' | 'amber' | 'slate' | 'rose' }) {
-  const className =
-    tone === 'emerald'
-      ? 'bg-emerald-50 text-emerald-800'
-      : tone === 'amber'
-        ? 'bg-amber-50 text-amber-800'
-        : tone === 'rose'
-          ? 'bg-rose-50 text-rose-800'
-          : 'bg-slate-100 text-slate-700'
+function StatusChip({ label, tone }: { label: string; tone: 'accent' | 'amber' | 'slate' | 'rose' }) {
+  if (tone === 'accent') {
+    return (
+      <span
+        className="rounded-full px-3 py-1 text-xs font-medium uppercase tracking-[0.12em]"
+        style={{ backgroundColor: 'var(--color-accent-light)', color: 'var(--color-accent-text)' }}
+      >
+        {label}
+      </span>
+    )
+  }
 
-  return <span className={`rounded-full px-3 py-1 text-xs font-medium uppercase tracking-[0.12em] ${className}`}>{label}</span>
+  const className =
+    tone === 'amber'
+      ? 'bg-amber-50 text-amber-800'
+      : tone === 'rose'
+        ? 'bg-rose-50 text-rose-800'
+        : 'bg-slate-100 text-slate-700'
+
+  return (
+    <span className={`rounded-full px-3 py-1 text-xs font-medium uppercase tracking-[0.12em] ${className}`}>
+      {label}
+    </span>
+  )
 }
 
 function QueueMeta({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs uppercase text-slate-500">{label}</p>
-      <p className="mt-1 text-sm text-slate-900">{value}</p>
+      <p className="text-xs uppercase" style={{ color: 'var(--color-text-secondary)' }}>{label}</p>
+      <p className="mt-1 text-[14px]" style={{ color: 'var(--color-text)' }}>{value}</p>
     </div>
   )
 }
 
 function Meta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <p className="text-xs uppercase text-slate-500">{label}</p>
-      <p className="mt-2 text-sm font-medium capitalize text-slate-950">{value.replaceAll('_', ' ')}</p>
+    <div
+      className="rounded-lg p-4"
+      style={{ border: '1px solid var(--color-border-soft)', backgroundColor: 'var(--color-surface)' }}
+    >
+      <p className="text-xs uppercase" style={{ color: 'var(--color-text-secondary)' }}>{label}</p>
+      <p className="mt-2 text-[14px] font-medium capitalize" style={{ color: 'var(--color-text)' }}>{value.replaceAll('_', ' ')}</p>
     </div>
   )
 }

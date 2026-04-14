@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { SectionCard } from '@/components/SectionCard'
+import { SkeletonRow } from '@/components/Skeleton'
+import { useToast } from '@/components/Toast'
 import {
   classifyInquiryApi,
   draftInquiryReplyApi,
@@ -64,18 +66,20 @@ export function InquiryThreadPage() {
   const { inquiryId } = useParams<{ inquiryId: string }>()
   const [data, setData] = useState<InquiryWithThreadRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loadKey, setLoadKey] = useState(0)
   const [classifying, setClassifying] = useState(false)
   const [drafting, setDrafting] = useState(false)
   const [negotiating, setNegotiating] = useState(false)
   const [draftResult, setDraftResult] = useState<{ subject: string; body: string } | null>(null)
   const [negotiationResult, setNegotiationResult] = useState<NegotiationDraftRecord | null>(null)
   const [dealState, setDealState] = useState<{ dealId: string; created: boolean } | null>(null)
-  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const toast = useToast()
 
   useEffect(() => {
     if (!inquiryId) return
 
     let cancelled = false
+    setError(null)
 
     const loadThread = async () => {
       try {
@@ -116,14 +120,34 @@ export function InquiryThreadPage() {
     return () => {
       cancelled = true
     }
-  }, [inquiryId])
+  }, [inquiryId, loadKey])
 
   if (error) {
-    return <SectionCard title="Error loading thread">{error}</SectionCard>
+    return (
+      <div
+        className="flex items-center justify-between rounded-xl px-4 py-3 text-[14px]"
+        style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border-soft)', borderLeft: '3px solid var(--color-destructive)' }}
+      >
+        <span style={{ color: 'var(--color-text)' }}>Failed to load thread: {error}</span>
+        <button
+          onClick={() => setLoadKey((k) => k + 1)}
+          className="ml-4 text-[13px] font-medium hover:underline"
+          style={{ color: 'var(--color-accent)' }}
+        >
+          Retry
+        </button>
+      </div>
+    )
   }
 
   if (!data) {
-    return <SectionCard title="Loading" subtitle="Thread ophalen...">Even geduld.</SectionCard>
+    return (
+      <SectionCard title="Loading thread">
+        <div className="space-y-2">
+          {[...Array(4)].map((_, i) => <SkeletonRow key={i} />)}
+        </div>
+      </SectionCard>
+    )
   }
 
   const { inquiry, messages } = data
@@ -154,10 +178,10 @@ export function InquiryThreadPage() {
           ) : null}
         </div>
 
-        <p className="mt-4 text-sm leading-6 text-slate-700">{inquiry.message}</p>
+        <p className="mt-4 text-sm leading-6" style={{ color: 'var(--color-text-secondary)' }}>{inquiry.message}</p>
 
         {inquiry.classificationReason ? (
-          <p className="mt-2 text-xs italic text-slate-400">{inquiry.classificationReason}</p>
+          <p className="mt-2 text-xs italic" style={{ color: 'var(--color-text-secondary)' }}>{inquiry.classificationReason}</p>
         ) : null}
 
         <div className="mt-5 flex flex-wrap gap-2">
@@ -166,7 +190,6 @@ export function InquiryThreadPage() {
             disabled={classifying}
             onClick={async () => {
               setClassifying(true)
-              setActionMessage(null)
               try {
                 const result = await classifyInquiryApi(inquiryId!)
                 setData((prev) =>
@@ -181,16 +204,18 @@ export function InquiryThreadPage() {
                       }
                     : prev,
                 )
-                setActionMessage(
+                toast.show(
                   `Classified as: ${CLASSIFICATION_LABELS[result.classification] ?? result.classification}`,
+                  'success',
                 )
               } catch (err) {
-                setActionMessage(err instanceof Error ? err.message : 'Classification failed.')
+                toast.show(err instanceof Error ? err.message : 'Classification failed.', 'error')
               } finally {
                 setClassifying(false)
               }
             }}
-            className="rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+            className="rounded-lg px-4 py-2 text-[14px] text-white disabled:opacity-50"
+            style={{ backgroundColor: 'var(--color-accent)' }}
           >
             {classifying ? 'Classifying...' : 'Classify'}
           </button>
@@ -200,7 +225,6 @@ export function InquiryThreadPage() {
             disabled={drafting}
             onClick={async () => {
               setDrafting(true)
-              setActionMessage(null)
               try {
                 const result = await draftInquiryReplyApi(inquiryId!)
                 setDraftResult(result.draft)
@@ -225,12 +249,13 @@ export function InquiryThreadPage() {
                     : prev,
                 )
               } catch (err) {
-                setActionMessage(err instanceof Error ? err.message : 'Draft generation failed.')
+                toast.show(err instanceof Error ? err.message : 'Draft generation failed.', 'error')
               } finally {
                 setDrafting(false)
               }
             }}
-            className="rounded-lg border border-emerald-900 px-4 py-2 text-sm text-emerald-900 disabled:opacity-50"
+            className="rounded-lg px-4 py-2 text-[14px] disabled:opacity-50"
+            style={{ border: '1px solid var(--color-accent)', color: 'var(--color-accent)' }}
           >
             {drafting ? 'Generating...' : 'Draft reply'}
           </button>
@@ -241,7 +266,6 @@ export function InquiryThreadPage() {
               disabled={negotiating}
               onClick={async () => {
                 setNegotiating(true)
-                setActionMessage(null)
                 try {
                   const result = await negotiateInquiryCounterApi(inquiryId!)
                   setNegotiationResult(result.negotiation)
@@ -266,18 +290,19 @@ export function InquiryThreadPage() {
                         }
                       : prev,
                   )
-                  setActionMessage(
+                  toast.show(
                     result.deal.created
-                      ? `Deal ${result.deal.dealId} started. Counter-offer draft saved to the thread.`
+                      ? `Deal ${result.deal.dealId} started. Counter-offer draft saved.`
                       : `Counter-offer draft saved to existing deal ${result.deal.dealId}.`,
+                    'success',
                   )
                 } catch (err) {
-                  setActionMessage(err instanceof Error ? err.message : 'Negotiation draft failed.')
+                  toast.show(err instanceof Error ? err.message : 'Negotiation draft failed.', 'error')
                 } finally {
                   setNegotiating(false)
                 }
               }}
-              className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 disabled:opacity-50"
+              className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-[14px] text-amber-900 disabled:opacity-50"
             >
               {negotiating ? 'Thinking...' : 'Suggest counter-offer'}
             </button>
@@ -285,15 +310,12 @@ export function InquiryThreadPage() {
 
           <Link
             to="/admin/inbox"
-            className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            className="rounded-lg px-4 py-2 text-[14px] hover:bg-[#f5f5f7]"
+            style={{ border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
           >
-            {'<- Terug naar inbox'}
+            {'← Terug naar inbox'}
           </Link>
         </div>
-
-        {actionMessage ? (
-          <p className="mt-3 text-sm text-slate-600">{actionMessage}</p>
-        ) : null}
       </SectionCard>
 
       {draftResult ? (
@@ -301,11 +323,14 @@ export function InquiryThreadPage() {
           title="Draft reply"
           subtitle="Bekijk en verstuur handmatig via je e-mailclient - nooit automatisch verzonden."
         >
-          <p className="text-sm font-medium text-slate-900">Subject: {draftResult.subject}</p>
-          <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+          <p className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>Subject: {draftResult.subject}</p>
+          <pre
+            className="mt-3 whitespace-pre-wrap rounded-xl p-4 text-[14px] leading-6"
+            style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-secondary)' }}
+          >
             {draftResult.body}
           </pre>
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
             Dit concept is opgeslagen in de thread. Kopieer en verstuur via je e-mailclient.
           </p>
         </SectionCard>
@@ -320,32 +345,39 @@ export function InquiryThreadPage() {
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">
               Suggested counter-offer
             </p>
-            <p className="mt-2 text-3xl font-semibold text-slate-950">
+            <p className="mt-2 text-3xl font-semibold" style={{ color: 'var(--color-text)' }}>
               {formatCurrency(negotiationResult.suggestedPrice)}
             </p>
-            <p className="mt-3 text-sm leading-6 text-slate-700">{negotiationResult.reasoning}</p>
+            <p className="mt-3 text-sm leading-6" style={{ color: 'var(--color-text-secondary)' }}>{negotiationResult.reasoning}</p>
           </div>
 
-          <div className="mt-4 rounded-xl bg-slate-50 p-4">
-            <p className="text-sm font-medium text-slate-900">
+          <div
+            className="mt-4 rounded-xl p-4"
+            style={{ backgroundColor: 'var(--color-bg)' }}
+          >
+            <p className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>
               Subject: {negotiationResult.draftSubject}
             </p>
-            <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+            <pre className="mt-3 whitespace-pre-wrap text-sm leading-6" style={{ color: 'var(--color-text-secondary)' }}>
               {negotiationResult.draftBody}
             </pre>
           </div>
 
           {dealState ? (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-white p-4">
+            <div
+              className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl p-4"
+              style={{ border: '1px solid var(--color-border-soft)', backgroundColor: 'var(--color-surface)' }}
+            >
               <div>
-                <p className="text-sm font-medium text-slate-900">
+                <p className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>
                   {dealState.created ? 'Deal gestart' : 'Bestaande deal gekoppeld'}
                 </p>
-                <p className="mt-1 text-sm text-slate-600">{dealState.dealId}</p>
+                <p className="mt-1 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{dealState.dealId}</p>
               </div>
               <Link
                 to="/admin/deals"
-                className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"
+                className="rounded-lg px-4 py-2 text-[14px] text-white"
+                style={{ backgroundColor: 'var(--color-text)' }}
               >
                 Open deals
               </Link>
@@ -359,7 +391,7 @@ export function InquiryThreadPage() {
         subtitle={`${messages.length} bericht${messages.length !== 1 ? 'en' : ''} in deze thread`}
       >
         {messages.length === 0 ? (
-          <p className="text-sm text-slate-500">Geen berichten gevonden in deze thread.</p>
+          <p className="text-[14px]" style={{ color: 'var(--color-text-secondary)' }}>Geen berichten gevonden in deze thread.</p>
         ) : (
           <div className="space-y-3">
             {messages.map((msg) => {
@@ -368,12 +400,15 @@ export function InquiryThreadPage() {
               return (
                 <div
                   key={msg.id}
-                  className={`rounded-xl p-4 text-sm ${
-                    msg.direction === 'inbound' ? 'bg-slate-50' : 'bg-emerald-50'
-                  }`}
+                  className="rounded-xl p-4 text-[14px]"
+                  style={
+                    msg.direction === 'inbound'
+                      ? { backgroundColor: 'var(--color-bg)' }
+                      : { backgroundColor: 'var(--color-accent-light)' }
+                  }
                 >
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                    <span className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--color-text-secondary)' }}>
                       {msg.direction === 'inbound'
                         ? 'Inbound'
                         : msg.classification === 'negotiation_draft'
@@ -382,20 +417,20 @@ export function InquiryThreadPage() {
                             ? 'Concept (niet verzonden)'
                             : 'Outbound'}
                     </span>
-                    <span className="text-xs text-slate-400">
+                    <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
                       {msg.sentAt ? new Date(msg.sentAt).toLocaleString('nl-NL') : 'Niet verzonden'}
                     </span>
                   </div>
 
                   {negotiationDraft ? (
                     <div className="space-y-3">
-                      <p className="text-sm font-medium text-slate-900">
+                      <p className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>
                         Counter-offer: {formatCurrency(negotiationDraft.suggestedPrice)}
                       </p>
-                      <p className="leading-6 text-slate-700">{negotiationDraft.reasoning}</p>
-                      <div className="rounded-lg bg-white/70 p-3">
-                        <p className="font-medium text-slate-800">{negotiationDraft.draftSubject}</p>
-                        <p className="mt-2 whitespace-pre-wrap leading-6 text-slate-700">
+                      <p className="leading-6" style={{ color: 'var(--color-text-secondary)' }}>{negotiationDraft.reasoning}</p>
+                      <div className="rounded-lg p-3" style={{ backgroundColor: 'rgba(255,255,255,0.7)' }}>
+                        <p className="font-medium" style={{ color: 'var(--color-text)' }}>{negotiationDraft.draftSubject}</p>
+                        <p className="mt-2 whitespace-pre-wrap leading-6" style={{ color: 'var(--color-text-secondary)' }}>
                           {negotiationDraft.draftBody}
                         </p>
                       </div>
@@ -403,9 +438,9 @@ export function InquiryThreadPage() {
                   ) : (
                     <>
                       {msg.subject ? (
-                        <p className="mb-1 font-medium text-slate-800">{msg.subject}</p>
+                        <p className="mb-1 font-medium" style={{ color: 'var(--color-text)' }}>{msg.subject}</p>
                       ) : null}
-                      <p className="whitespace-pre-wrap leading-6 text-slate-700">{msg.body}</p>
+                      <p className="whitespace-pre-wrap leading-6" style={{ color: 'var(--color-text-secondary)' }}>{msg.body}</p>
                     </>
                   )}
                 </div>

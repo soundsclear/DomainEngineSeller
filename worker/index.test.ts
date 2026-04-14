@@ -26,6 +26,9 @@ const getPublicDomain = vi.fn()
 const getDomainPageContent = vi.fn()
 const upsertDomainPageContent = vi.fn()
 const listOutreachWorkflows = vi.fn()
+const listSettings = vi.fn()
+const getSetting = vi.fn()
+const upsertSetting = vi.fn()
 const classifyInquiry = vi.fn()
 const draftReply = vi.fn()
 const negotiateCounter = vi.fn()
@@ -92,6 +95,12 @@ vi.mock('../src/server/db/outreach-repository', () => ({
   markOutreachWorkflowSent,
 }))
 
+vi.mock('../src/server/db/settings-repository', () => ({
+  listSettings,
+  getSetting,
+  upsertSetting,
+}))
+
 vi.mock('../src/server/ai/inquiry-intelligence', () => ({
   classifyInquiry,
   draftReply,
@@ -128,7 +137,7 @@ vi.mock('../src/server/email', () => ({
   sendOutreachEmail,
 }))
 
-const { default: app } = await import('./index')
+const { default: app, runScheduledOutreachAutoSend } = await import('./index')
 
 describe('worker routes', () => {
   const env = {
@@ -511,6 +520,7 @@ describe('worker routes', () => {
           companyName: 'Volt Storage',
           contactName: 'Volt Storage',
           contactEmail: 'buyer@example.com',
+          doNotContact: false,
         },
         domain: {
           id: 'domain-1',
@@ -568,6 +578,7 @@ describe('worker routes', () => {
           companyName: 'Volt Storage',
           contactName: 'Buyer',
           contactEmail: 'buyer@example.com',
+          doNotContact: false,
         },
         domain: {
           id: 'domain-1',
@@ -642,6 +653,7 @@ describe('worker routes', () => {
           companyName: 'Missing Email Co',
           contactName: 'No Email',
           contactEmail: null,
+          doNotContact: false,
         },
         domain: {
           id: 'domain-1',
@@ -699,6 +711,7 @@ describe('worker routes', () => {
           companyName: 'Already Sent Co',
           contactName: 'Buyer',
           contactEmail: 'buyer@example.com',
+          doNotContact: false,
         },
         domain: {
           id: 'domain-1',
@@ -756,6 +769,7 @@ describe('worker routes', () => {
           companyName: 'Buyer One',
           contactName: 'Buyer',
           contactEmail: 'buyer1@example.com',
+          doNotContact: false,
         },
         domain: {
           id: 'domain-1',
@@ -791,6 +805,7 @@ describe('worker routes', () => {
           companyName: 'Buyer Two',
           contactName: 'Buyer',
           contactEmail: 'buyer2@example.com',
+          doNotContact: false,
         },
       }
 
@@ -827,6 +842,233 @@ describe('worker routes', () => {
       expect(sendOutreachEmail).toHaveBeenCalledTimes(2)
       expect(markOutreachWorkflowSent).toHaveBeenCalledTimes(2)
       expect(listSendableApprovedOutreachWorkflows).toHaveBeenCalledWith(env.DB)
+    })
+  })
+
+  describe('settings routes', () => {
+    it('lists saved settings', async () => {
+      listSettings.mockResolvedValue([
+        {
+          key: 'OUTREACH_DAILY_LIMIT',
+          value: 7,
+          updatedAt: 1710000000000,
+        },
+      ])
+
+      const response = await app.fetch(new Request('http://localhost/api/settings'), env)
+      const body = (await response.json()) as { items: Array<{ key: string; value: number }> }
+
+      expect(response.status).toBe(200)
+      expect(listSettings).toHaveBeenCalledWith(env.DB)
+      expect(body.items).toEqual([
+        expect.objectContaining({
+          key: 'OUTREACH_DAILY_LIMIT',
+          value: 7,
+          updatedAt: 1710000000000,
+        }),
+      ])
+    })
+
+    it('updates a setting value', async () => {
+      upsertSetting.mockResolvedValue({
+        key: 'OUTREACH_DAILY_LIMIT',
+        value: 5,
+        updatedAt: 1710000000001,
+      })
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/settings/OUTREACH_DAILY_LIMIT', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: 5 }),
+        }),
+        env,
+      )
+      const body = (await response.json()) as { item: { key: string; value: number } }
+
+      expect(response.status).toBe(200)
+      expect(upsertSetting).toHaveBeenCalledWith(env.DB, 'OUTREACH_DAILY_LIMIT', '5')
+      expect(body.item).toEqual(
+        expect.objectContaining({
+          key: 'OUTREACH_DAILY_LIMIT',
+          value: 5,
+          updatedAt: 1710000000001,
+        }),
+      )
+    })
+  })
+
+  describe('scheduled outreach auto-send', () => {
+    it('respects env flag, daily limit, and do-not-contact suppression', async () => {
+      const workflowBlocked = {
+        thread: {
+          id: 'thread-skip',
+          leadId: 'lead-skip',
+          domainId: 'domain-1',
+          status: 'approved_to_send',
+          autoSendEnabled: true,
+          lastMessageAt: new Date('2026-04-13T08:00:00.000Z').toISOString(),
+          createdAt: new Date('2026-04-13T08:00:00.000Z').toISOString(),
+        },
+        message: {
+          id: 'msg-skip',
+          threadId: 'thread-skip',
+          direction: 'outbound',
+          channel: 'email',
+          subject: 'Skip',
+          body: 'Skip body',
+          classification: 'draft',
+          createdAt: new Date('2026-04-13T08:00:00.000Z').toISOString(),
+          sentAt: null,
+        },
+        lead: {
+          id: 'lead-skip',
+          companyName: 'Blocked Lead',
+          contactName: 'Blocked Lead',
+          contactEmail: 'blocked@example.com',
+          doNotContact: true,
+        },
+        domain: {
+          id: 'domain-1',
+          domainName: 'greenbatteryhub.com',
+        },
+        draft: {
+          sequenceStep: 'initial',
+          subject: 'Skip',
+          body: 'Skip body',
+          tone: 'standard',
+          language: 'EN',
+          recommendedFollowUpDays: 5,
+          wordCount: 2,
+          personalizationTokensUsed: [],
+        },
+      }
+      const workflowOne = {
+        thread: {
+          id: 'thread-auto-1',
+          leadId: 'lead-auto-1',
+          domainId: 'domain-1',
+          status: 'approved_to_send',
+          autoSendEnabled: true,
+          lastMessageAt: new Date('2026-04-13T09:00:00.000Z').toISOString(),
+          createdAt: new Date('2026-04-13T09:00:00.000Z').toISOString(),
+        },
+        message: {
+          id: 'msg-auto-1',
+          threadId: 'thread-auto-1',
+          direction: 'outbound',
+          channel: 'email',
+          subject: 'Auto 1',
+          body: 'Auto body 1',
+          classification: 'draft',
+          createdAt: new Date('2026-04-13T09:00:00.000Z').toISOString(),
+          sentAt: null,
+        },
+        lead: {
+          id: 'lead-auto-1',
+          companyName: 'Auto Lead',
+          contactName: 'Buyer',
+          contactEmail: 'auto1@example.com',
+          doNotContact: false,
+        },
+        domain: {
+          id: 'domain-1',
+          domainName: 'greenbatteryhub.com',
+        },
+        draft: {
+          sequenceStep: 'initial',
+          subject: 'Auto 1',
+          body: 'Auto body 1',
+          tone: 'standard',
+          language: 'EN',
+          recommendedFollowUpDays: 5,
+          wordCount: 2,
+          personalizationTokensUsed: [],
+        },
+      }
+      const workflowTwo = {
+        ...workflowOne,
+        thread: {
+          ...workflowOne.thread,
+          id: 'thread-auto-2',
+          leadId: 'lead-auto-2',
+          createdAt: new Date('2026-04-13T10:00:00.000Z').toISOString(),
+          lastMessageAt: new Date('2026-04-13T10:00:00.000Z').toISOString(),
+        },
+        message: {
+          ...workflowOne.message,
+          id: 'msg-auto-2',
+          threadId: 'thread-auto-2',
+          subject: 'Auto 2',
+          body: 'Auto body 2',
+          createdAt: new Date('2026-04-13T10:00:00.000Z').toISOString(),
+        },
+        lead: {
+          id: 'lead-auto-2',
+          companyName: 'Second Auto Lead',
+          contactName: 'Buyer',
+          contactEmail: 'auto2@example.com',
+          doNotContact: false,
+        },
+      }
+
+      getSetting.mockResolvedValue({
+        key: 'OUTREACH_DAILY_LIMIT',
+        value: 1,
+        updatedAt: 1710000000000,
+      })
+      listSendableApprovedOutreachWorkflows.mockResolvedValue([workflowBlocked, workflowOne, workflowTwo])
+      getOutreachWorkflowByThreadId.mockImplementation(async (_db: D1Database, threadId: string) =>
+        threadId === 'thread-auto-1'
+          ? workflowOne
+          : threadId === 'thread-auto-2'
+            ? workflowTwo
+            : workflowBlocked,
+      )
+      sendOutreachEmail.mockResolvedValue(undefined)
+      markOutreachWorkflowSent.mockResolvedValue({
+        ...workflowOne,
+        thread: { ...workflowOne.thread, status: 'sent' },
+        message: { ...workflowOne.message, sentAt: new Date().toISOString() },
+      })
+
+      const summary = await runScheduledOutreachAutoSend(env.DB, {
+        ...env,
+        OUTREACH_AUTO_SEND_ENABLED: 'true',
+      })
+
+      expect(getSetting).toHaveBeenCalledWith(env.DB, 'OUTREACH_DAILY_LIMIT')
+      expect(sendOutreachEmail).toHaveBeenCalledTimes(1)
+      expect(sendOutreachEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'auto1@example.com',
+          subject: 'Auto 1',
+          body: 'Auto body 1',
+        }),
+      )
+      expect(summary).toMatchObject({
+        enabled: true,
+        dailyLimit: 1,
+        considered: 2,
+        sent: 1,
+        failed: 0,
+        skipped: 1,
+      })
+    })
+
+    it('does nothing when the env flag is disabled', async () => {
+      const summary = await runScheduledOutreachAutoSend(env.DB, env)
+
+      expect(summary).toMatchObject({
+        enabled: false,
+        dailyLimit: 0,
+        considered: 0,
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+      })
+      expect(listSendableApprovedOutreachWorkflows).not.toHaveBeenCalled()
+      expect(sendOutreachEmail).not.toHaveBeenCalled()
     })
   })
 })

@@ -46,6 +46,7 @@ export interface OutreachWorkflowRecord {
     companyName: string
     contactName: string
     contactEmail?: string | null
+    doNotContact: boolean
   }
   domain: {
     id: string
@@ -108,6 +109,7 @@ export function createLeadOutreachWorkflow(input: SaveLeadOutreachDraftInput): O
       id: built.lead.id,
       companyName: built.lead.companyName,
       contactName: built.lead.contactName,
+      doNotContact: built.lead.doNotContact,
     },
     domain: {
       id: built.domain.id,

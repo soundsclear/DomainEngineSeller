@@ -38,6 +38,40 @@ CREATE TABLE IF NOT EXISTS leads (
   created_at integer NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS lead_enrichment_runs (
+  id text PRIMARY KEY NOT NULL,
+  lead_id text NOT NULL,
+  provider text NOT NULL,
+  enrichment_type text NOT NULL,
+  actor_name text,
+  actor_run_id text,
+  status text NOT NULL,
+  input_json text NOT NULL,
+  raw_metadata_json text,
+  error_message text,
+  started_at integer,
+  finished_at integer,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lead_enrichment_contact_points (
+  id text PRIMARY KEY NOT NULL,
+  lead_id text NOT NULL,
+  enrichment_run_id text NOT NULL,
+  contact_type text NOT NULL,
+  value text NOT NULL,
+  label text,
+  source_url text,
+  source_label text,
+  source_type text,
+  confidence_score integer NOT NULL DEFAULT 0,
+  raw_metadata_json text,
+  is_primary integer NOT NULL DEFAULT 0,
+  verified integer NOT NULL DEFAULT 0,
+  created_at integer NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS domain_page_content (
   domain_id text PRIMARY KEY NOT NULL,
   seo_title text NOT NULL,
@@ -58,6 +92,32 @@ CREATE TABLE IF NOT EXISTS contacts (
   contact_role text,
   contact_email text,
   contact_page_url text,
+  created_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lead_enrichment_runs (
+  id text PRIMARY KEY NOT NULL,
+  lead_id text NOT NULL,
+  provider text NOT NULL,
+  actor_id text NOT NULL,
+  status text NOT NULL,
+  source_website text,
+  raw_payload_json text,
+  error_message text,
+  started_at integer NOT NULL,
+  finished_at integer,
+  created_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lead_contact_points (
+  id text PRIMARY KEY NOT NULL,
+  lead_id text NOT NULL,
+  run_id text,
+  type text NOT NULL,
+  value text NOT NULL,
+  label text,
+  source_url text,
+  confidence integer NOT NULL DEFAULT 50,
   created_at integer NOT NULL
 );
 
@@ -135,6 +195,13 @@ CREATE TABLE IF NOT EXISTS transfer_tasks (
   manual_checkpoint_required integer NOT NULL DEFAULT 1,
   created_at integer NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  id text PRIMARY KEY NOT NULL,
+  key text NOT NULL,
+  value text NOT NULL,
+  updated_at integer NOT NULL
+);
 `
 
 let schemaReady = false
@@ -176,5 +243,24 @@ export async function ensureInquiryIntelligenceColumns(binding: D1Database) {
     await binding
       .prepare(`ALTER TABLE inbound_inquiries ADD COLUMN classification_reason TEXT`)
       .run()
+  }
+}
+
+export async function ensureLeadEnrichmentColumns(binding: D1Database) {
+  const tables = ['lead_enrichment_runs', 'lead_enrichment_contact_points']
+
+  for (const tableName of tables) {
+    const tableInfo = await binding.prepare(`PRAGMA table_info(${tableName})`).all()
+    const hasTable = (tableInfo.results as Array<{ name: string }>).length > 0
+
+    if (hasTable) {
+      continue
+    }
+
+    // If the schema was bootstrapped before these tables existed, rerun the full schema
+    // creation path to add them safely without disturbing existing data.
+    schemaReady = false
+    await ensureOutreachSchema(binding)
+    return
   }
 }
