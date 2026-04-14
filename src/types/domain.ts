@@ -16,7 +16,6 @@ export type ClosingMethod =
   | 'escrow_com'
   | 'sedo_transfer'
   | 'afternic_network'
-  | 'stripe_invoice_manual_transfer'
 
 export type DealStatus =
   | 'offer_accepted'
