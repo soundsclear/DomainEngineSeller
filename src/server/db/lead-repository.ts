@@ -125,6 +125,38 @@ export async function getLeadById(binding: D1Database, leadId: string): Promise<
   }
 }
 
+export async function setLeadDoNotContact(
+  binding: D1Database,
+  leadId: string,
+  doNotContact: boolean,
+) {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  await db.update(leads).set({ doNotContact }).where(eq(leads.id, leadId))
+  return getLeadById(binding, leadId)
+}
+
+export async function setLeadDoNotContactByContactEmail(
+  binding: D1Database,
+  contactEmail: string,
+  doNotContact: boolean,
+) {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  const rows = await db
+    .select({ leadId: contacts.leadId })
+    .from(contacts)
+    .where(eq(contacts.contactEmail, contactEmail))
+
+  for (const row of rows) {
+    if (!row.leadId) {
+      continue
+    }
+
+    await db.update(leads).set({ doNotContact }).where(eq(leads.id, row.leadId))
+  }
+}
+
 export async function upsertLeadContact(
   binding: D1Database,
   input: { leadId: string; contactName: string; contactEmail: string },
