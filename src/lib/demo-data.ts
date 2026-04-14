@@ -117,7 +117,7 @@ export const demoDeals: DealRecord[] = [
     id: 'deal-2',
     domainId: 'amsterdamdakdekker-nl',
     leadId: 'lead-1',
-    closingMethod: 'stripe_invoice_manual_transfer',
+    closingMethod: 'escrow_com',
     status: 'seller_transfer_required',
     agreedPrice: 1500,
     paymentSecured: true,
