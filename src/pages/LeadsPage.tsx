@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { SectionCard } from '@/components/SectionCard'
-import { fetchLeads, fetchOutreachWorkflows, generateLeadOutreachDraft, saveLeadOutreachWorkflow, type OutreachWorkflowRecord } from '@/lib/api'
+import { fetchLeads, fetchOutreachWorkflows, generateLeadOutreachDraft, saveLeadOutreachWorkflow, createLeadApi, updateLeadDoNotContactApi, type OutreachWorkflowRecord } from '@/lib/api'
 import type { OutreachDraft } from '@/lib/outreach-draft'
 import type { LeadRecord } from '@/types/domain'
 
@@ -27,6 +27,10 @@ export function LeadsPage() {
   const [draftError, setDraftError] = useState<string | null>(null)
   const [saveLoading, setSaveLoading] = useState(false)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [createForm, setCreateForm] = useState({ companyName: '', website: '', country: '' })
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [createSubmitting, setCreateSubmitting] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -56,6 +60,37 @@ export function LeadsPage() {
     () => leads.find((lead) => lead.id === selectedLeadId) ?? null,
     [leads, selectedLeadId],
   )
+
+  async function handleCreateLead(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setCreateSubmitting(true)
+    setCreateError(null)
+    try {
+      const result = await createLeadApi({
+        companyName: createForm.companyName,
+        website: createForm.website || undefined,
+        country: createForm.country || undefined,
+      })
+      setLeads((current) => [...current, result.item as unknown as LeadRecord])
+      setCreateForm({ companyName: '', website: '', country: '' })
+      setShowCreate(false)
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Kon de lead niet aanmaken.')
+    } finally {
+      setCreateSubmitting(false)
+    }
+  }
+
+  async function handleToggleDoNotContact(leadId: string, current: boolean) {
+    try {
+      await updateLeadDoNotContactApi(leadId, !current)
+      setLeads((items) =>
+        items.map((lead) => (lead.id === leadId ? { ...lead, doNotContact: !current } : lead)),
+      )
+    } catch {
+      // non-critical, UI stays consistent on next load
+    }
+  }
 
   async function handleGenerateDraft() {
     if (!selectedLead) {
@@ -281,6 +316,79 @@ export function LeadsPage() {
           ) : null}
         </SectionCard>
       </div>
+
+      <SectionCard
+        title="Leads"
+        subtitle="Potentiële kopers per domein. Outreach is altijd draft-first."
+      >
+        <div className="mb-4 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setShowCreate((v) => !v)}
+            className="rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white"
+          >
+            {showCreate ? 'Annuleren' : 'Nieuwe lead'}
+          </button>
+        </div>
+
+        {showCreate && (
+          <form onSubmit={handleCreateLead} className="mb-4 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <label className="block space-y-1 text-sm text-slate-700">
+              <span>Bedrijfsnaam *</span>
+              <input
+                required
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={createForm.companyName}
+                onChange={(e) => setCreateForm((f) => ({ ...f, companyName: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-sm text-slate-700">
+              <span>Website</span>
+              <input
+                type="url"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={createForm.website}
+                onChange={(e) => setCreateForm((f) => ({ ...f, website: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-sm text-slate-700">
+              <span>Land</span>
+              <input
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={createForm.country}
+                onChange={(e) => setCreateForm((f) => ({ ...f, country: e.target.value }))}
+              />
+            </label>
+            {createError && <p className="text-sm text-rose-700">{createError}</p>}
+            <button
+              type="submit"
+              disabled={createSubmitting}
+              className="rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              {createSubmitting ? 'Opslaan...' : 'Lead aanmaken'}
+            </button>
+          </form>
+        )}
+
+        <div className="space-y-2">
+          {leads.map((lead) => (
+            <div key={lead.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div>
+                <p className="text-sm font-medium text-slate-900">{lead.companyName}</p>
+                {lead.website && <p className="text-xs text-slate-500">{lead.website}</p>}
+              </div>
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={lead.doNotContact}
+                  onChange={() => handleToggleDoNotContact(lead.id, lead.doNotContact)}
+                />
+                Do not contact
+              </label>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
 
       <SectionCard
         title="Outreach queue"
