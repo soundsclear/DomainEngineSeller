@@ -45,6 +45,61 @@ function mapRow(row: typeof leads.$inferSelect): LeadRecord {
   }
 }
 
+export async function listAllLeads(binding: D1Database): Promise<LeadRecord[]> {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  const rows = await db.select().from(leads).orderBy(asc(leads.createdAt))
+  return rows.map(mapRow)
+}
+
+export interface CreateManualLeadInput {
+  domainId?: string
+  companyName: string
+  website?: string
+  country?: string
+  notes?: string
+}
+
+export async function createManualLead(binding: D1Database, input: CreateManualLeadInput): Promise<LeadRecord> {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  const id = `lead-${crypto.randomUUID()}`
+  const createdAt = Date.now()
+
+  await db.insert(leads).values({
+    id,
+    domainId: input.domainId ?? null,
+    companyName: input.companyName,
+    website: input.website ? canonicalizeWebsiteUrl(input.website) : null,
+    buyerFitReason: null,
+    priorityScore: 0,
+    doNotContact: false,
+    country: input.country ?? null,
+    source: 'manual',
+    createdAt,
+  })
+
+  const [saved] = await db.select().from(leads).where(eq(leads.id, id)).limit(1)
+  if (!saved) throw new Error('Lead insert failed.')
+  return mapRow(saved)
+}
+
+export async function updateLeadDoNotContact(
+  binding: D1Database,
+  leadId: string,
+  doNotContact: boolean,
+): Promise<void> {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  await db.update(leads).set({ doNotContact }).where(eq(leads.id, leadId))
+}
+
+export async function deleteLead(binding: D1Database, leadId: string): Promise<void> {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  await db.delete(leads).where(eq(leads.id, leadId))
+}
+
 export async function listLeadsForDomain(binding: D1Database, domainId: string): Promise<LeadRecord[]> {
   await ensureOutreachSchema(binding)
   const db = getDb(binding)

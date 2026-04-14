@@ -1,9 +1,9 @@
-import { and, count, desc, eq, sum } from 'drizzle-orm'
+import { and, count, desc, eq, lte, sum } from 'drizzle-orm'
 import type { DomainImportInput } from '../../lib/csv-import'
 import { generatePriceRecommendation } from '../../lib/pricing-engine'
 import { getDb } from './client'
 import { ensureOutreachSchema } from './ensure-outreach-schema'
-import { deals, domains, inboundInquiries } from './schema'
+import { deals, domains, followupTasks, inboundInquiries, outreachThreads, transferTasks } from './schema'
 
 export interface DomainRow {
   id: string
@@ -75,6 +75,10 @@ export interface DashboardMetrics {
   dealsInProgress: number
   migrationCandidates: number
   pipelineValue: number
+  xelTransferCheckpoints: number
+  repliesAwaitingAction: number
+  followUpsDueThisWeek: number
+  draftOutreachQueue: number
 }
 
 function domainSlug(domainName: string): string {
@@ -229,11 +233,37 @@ export async function getDashboardMetrics(binding: D1Database): Promise<Dashboar
     .where(eq(domains.migrationCandidate, true))
   const [pipeline] = await db.select({ value: sum(deals.agreedPrice) }).from(deals)
 
+  const weekFromNow = Date.now() + 7 * 24 * 60 * 60 * 1000
+
+  const [checkpointCount] = await db
+    .select({ value: count() })
+    .from(transferTasks)
+    .where(and(eq(transferTasks.manualCheckpointRequired, true), eq(transferTasks.status, 'prepared')))
+
+  const [repliesCount] = await db
+    .select({ value: count() })
+    .from(inboundInquiries)
+    .where(eq(inboundInquiries.status, 'new'))
+
+  const [followupCount] = await db
+    .select({ value: count() })
+    .from(followupTasks)
+    .where(and(eq(followupTasks.status, 'open'), lte(followupTasks.dueAt, weekFromNow)))
+
+  const [draftQueueCount] = await db
+    .select({ value: count() })
+    .from(outreachThreads)
+    .where(eq(outreachThreads.status, 'draft_prepared'))
+
   return {
     domains: domainCount?.value ?? 0,
     inboundInquiries: inquiryCount?.value ?? 0,
     dealsInProgress: dealCount?.value ?? 0,
     migrationCandidates: migrationCount?.value ?? 0,
     pipelineValue: Number(pipeline?.value ?? 0),
+    xelTransferCheckpoints: checkpointCount?.value ?? 0,
+    repliesAwaitingAction: repliesCount?.value ?? 0,
+    followUpsDueThisWeek: followupCount?.value ?? 0,
+    draftOutreachQueue: draftQueueCount?.value ?? 0,
   }
 }

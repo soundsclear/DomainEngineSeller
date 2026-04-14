@@ -73,33 +73,13 @@ export const leadEnrichmentRuns = sqliteTable('lead_enrichment_runs', {
   id: text('id').primaryKey(),
   leadId: text('lead_id').notNull().references(() => leads.id),
   provider: text('provider').notNull(),
-  enrichmentType: text('enrichment_type').notNull(),
-  actorName: text('actor_name'),
-  actorRunId: text('actor_run_id'),
+  actorId: text('actor_id').notNull(),
   status: text('status').notNull(),
-  inputJson: text('input_json').notNull(),
-  rawMetadataJson: text('raw_metadata_json'),
+  sourceWebsite: text('source_website'),
+  rawPayloadJson: text('raw_payload_json'),
   errorMessage: text('error_message'),
-  startedAt: integer('started_at'),
+  startedAt: integer('started_at').notNull(),
   finishedAt: integer('finished_at'),
-  createdAt: integer('created_at').notNull(),
-  updatedAt: integer('updated_at').notNull(),
-})
-
-export const leadEnrichmentContactPoints = sqliteTable('lead_enrichment_contact_points', {
-  id: text('id').primaryKey(),
-  leadId: text('lead_id').notNull().references(() => leads.id),
-  enrichmentRunId: text('enrichment_run_id').notNull().references(() => leadEnrichmentRuns.id),
-  contactType: text('contact_type').notNull(),
-  value: text('value').notNull(),
-  label: text('label'),
-  sourceUrl: text('source_url'),
-  sourceLabel: text('source_label'),
-  sourceType: text('source_type'),
-  confidenceScore: integer('confidence_score').notNull().default(0),
-  rawMetadataJson: text('raw_metadata_json'),
-  isPrimary: integer('is_primary', { mode: 'boolean' }).notNull().default(false),
-  verified: integer('verified', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at').notNull(),
 })
 
@@ -132,20 +112,6 @@ export const contacts = sqliteTable('contacts', {
   contactRole: text('contact_role'),
   contactEmail: text('contact_email'),
   contactPageUrl: text('contact_page_url'),
-  createdAt: integer('created_at').notNull(),
-})
-
-export const leadEnrichmentRuns = sqliteTable('lead_enrichment_runs', {
-  id: text('id').primaryKey(),
-  leadId: text('lead_id').notNull().references(() => leads.id),
-  provider: text('provider').notNull(),
-  actorId: text('actor_id').notNull(),
-  status: text('status').notNull(),
-  sourceWebsite: text('source_website'),
-  rawPayloadJson: text('raw_payload_json'),
-  errorMessage: text('error_message'),
-  startedAt: integer('started_at').notNull(),
-  finishedAt: integer('finished_at'),
   createdAt: integer('created_at').notNull(),
 })
 

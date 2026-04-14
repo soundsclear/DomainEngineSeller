@@ -1,10 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { BadgeEuro } from 'lucide-react'
 import { EmptyState } from '@/components/EmptyState'
 import { SectionCard } from '@/components/SectionCard'
 import { SkeletonRow } from '@/components/Skeleton'
 import { useToast } from '@/components/Toast'
-import { fetchDeals, fetchTransferTasks, generateStripeInvoicePayload, progressDeal, type DealViewRecord, type StripeInvoicePayloadResponse, type TransferTaskRecord } from '@/lib/api'
+import {
+  fetchDeals,
+  fetchTransferTasks,
+  fetchProviderTransactions,
+  createProviderTransactionApi,
+  generateStripeInvoicePayload,
+  progressDeal,
+  type DealViewRecord,
+  type StripeInvoicePayloadResponse,
+  type TransferTaskRecord,
+  type ProviderTransactionRecord,
+  type CreateProviderTransactionPayload,
+} from '@/lib/api'
 import type { XelTransferPackage } from '@/lib/xel-transfer'
 
 export function DealsPage() {
@@ -14,15 +26,24 @@ export function DealsPage() {
   const [paymentSecured, setPaymentSecured] = useState(false)
   const [buyerUsesXel, setBuyerUsesXel] = useState(false)
   const [buyerApprovalState, setBuyerApprovalState] = useState<'pending' | 'approved' | 'disputed'>('pending')
-  const [explicitInvoiceTransferApproval, setExplicitInvoiceTransferApproval] = useState(false)
   const [buyerXelAccount, setBuyerXelAccount] = useState('')
   const [buyerRegistrar, setBuyerRegistrar] = useState('')
+  const [explicitInvoiceTransferApproval, setExplicitInvoiceTransferApproval] = useState(false)
   const [invoiceBuyerEmail, setInvoiceBuyerEmail] = useState('')
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
   const [invoicePayload, setInvoicePayload] = useState<StripeInvoicePayloadResponse['payload'] | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const toast = useToast()
+  const [providerTxs, setProviderTxs] = useState<ProviderTransactionRecord[]>([])
+  const [showTxForm, setShowTxForm] = useState(false)
+  const [txForm, setTxForm] = useState<CreateProviderTransactionPayload>({
+    provider: 'escrow_com',
+    providerReference: '',
+    status: 'pending',
+  })
+  const [txError, setTxError] = useState<string | null>(null)
+  const [txSubmitting, setTxSubmitting] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -53,7 +74,42 @@ export function DealsPage() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!selectedDealId) {
+      setProviderTxs([])
+      return
+    }
+    let active = true
+    fetchProviderTransactions(selectedDealId)
+      .then((response) => {
+        if (active) setProviderTxs(response.items)
+      })
+      .catch(() => {
+        if (active) setProviderTxs([])
+      })
+    return () => {
+      active = false
+    }
+  }, [selectedDealId])
+
   const selectedDeal = useMemo(() => deals.find((deal) => deal.id === selectedDealId) ?? null, [deals, selectedDealId])
+
+  async function handleAddProviderTx(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedDealId) return
+    setTxSubmitting(true)
+    setTxError(null)
+    try {
+      const result = await createProviderTransactionApi(selectedDealId, txForm)
+      setProviderTxs((current) => [result.item, ...current])
+      setTxForm({ provider: 'escrow_com', providerReference: '', status: 'pending' })
+      setShowTxForm(false)
+    } catch (err) {
+      setTxError(err instanceof Error ? err.message : 'Kon de transactie niet opslaan.')
+    } finally {
+      setTxSubmitting(false)
+    }
+  }
 
   async function handleProgress() {
     if (!selectedDeal) return
@@ -150,9 +206,9 @@ export function DealsPage() {
                   setPaymentSecured(deal.paymentSecured)
                   setBuyerApprovalState(deal.buyerApprovalState ?? 'pending')
                   setBuyerUsesXel(false)
-                  setExplicitInvoiceTransferApproval(false)
                   setBuyerXelAccount('')
                   setBuyerRegistrar('')
+                  setExplicitInvoiceTransferApproval(false)
                   setInvoiceBuyerEmail('')
                   setInvoicePayload(null)
                 }}
@@ -387,6 +443,86 @@ export function DealsPage() {
                 </article>
               )
             })}
+          </div>
+        )}
+      </SectionCard>
+
+      <SectionCard title="Escrow / platform referenties" subtitle="Vastgelegde betalings- en overdrachtsreferenties van het escrow- of transferplatform.">
+        <div className="mb-4 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setShowTxForm((v) => !v)}
+            disabled={!selectedDealId}
+            className="rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white disabled:opacity-40"
+          >
+            {showTxForm ? 'Annuleren' : 'Referentie toevoegen'}
+          </button>
+        </div>
+
+        {showTxForm && selectedDealId && (
+          <form onSubmit={handleAddProviderTx} className="mb-4 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <label className="block space-y-1 text-sm text-slate-700">
+              <span>Platform</span>
+              <select
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={txForm.provider}
+                onChange={(e) => setTxForm((f) => ({ ...f, provider: e.target.value as CreateProviderTransactionPayload['provider'] }))}
+              >
+                <option value="escrow_com">Escrow.com</option>
+                <option value="sedo">Sedo</option>
+                <option value="afternic">Afternic</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label className="block space-y-1 text-sm text-slate-700">
+              <span>Referentienummer *</span>
+              <input
+                required
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={txForm.providerReference}
+                onChange={(e) => setTxForm((f) => ({ ...f, providerReference: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-sm text-slate-700">
+              <span>Status</span>
+              <input
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={txForm.status}
+                onChange={(e) => setTxForm((f) => ({ ...f, status: e.target.value }))}
+              />
+            </label>
+            {txError && <p className="text-sm text-rose-700">{txError}</p>}
+            <button
+              type="submit"
+              disabled={txSubmitting}
+              className="rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              {txSubmitting ? 'Opslaan...' : 'Opslaan'}
+            </button>
+          </form>
+        )}
+
+        {providerTxs.length === 0 ? (
+          <p className="text-sm text-slate-500">Nog geen referenties vastgelegd voor deze deal.</p>
+        ) : (
+          <div className="space-y-3">
+            {providerTxs.map((tx) => (
+              <article key={tx.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-slate-900">{tx.provider.replaceAll('_', ' ')}</p>
+                    <p className="mt-1 text-slate-600">Ref: {tx.providerReference}</p>
+                  </div>
+                  <span className="rounded-lg bg-white px-3 py-1 text-xs font-medium uppercase text-slate-700">
+                    {tx.status}
+                  </span>
+                </div>
+                {tx.amount != null && (
+                  <p className="mt-2 text-slate-600">Bedrag: €{tx.amount.toLocaleString('nl-NL')}</p>
+                )}
+                <p className="mt-1 text-xs text-slate-400">{new Date(tx.createdAt).toLocaleDateString('nl-NL')}</p>
+              </article>
+            ))}
           </div>
         )}
       </SectionCard>

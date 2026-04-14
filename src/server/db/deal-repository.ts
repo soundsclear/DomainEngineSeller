@@ -31,7 +31,6 @@ export interface ProgressDealInput {
   paymentSecured: boolean
   buyerUsesXel: boolean
   buyerApprovalState: 'pending' | 'approved' | 'disputed'
-  explicitInvoiceTransferApproval?: boolean
   buyerXelAccount?: string
   buyerRegistrar?: string
 }
@@ -154,7 +153,6 @@ export async function progressDeal(binding: D1Database, input: ProgressDealInput
     paymentSecured: input.paymentSecured,
     buyerUsesXel: input.buyerUsesXel,
     buyerApprovalState: input.buyerApprovalState,
-    explicitInvoiceTransferApproval: input.explicitInvoiceTransferApproval,
   })
 
   const now = Date.now()

@@ -36,6 +36,20 @@ export interface NormalizedContactEnrichmentResult {
   rawMetadata: unknown
 }
 
+export interface ApifyContactEnrichmentRunResult {
+  provider: ContactEnrichmentProvider
+  actorId: string
+  website: string
+  contacts: Array<{
+    type: ContactPointKind
+    value: string
+    label?: string | null
+    sourceUrl?: string | null
+    confidence: number
+  }>
+  rawItems: unknown[]
+}
+
 function clampConfidenceScore(value: unknown) {
   const numeric = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(numeric)) {
@@ -220,5 +234,56 @@ export function normalizeApifyContactEnrichmentResult(
     status: (toNullableString(record.status) as EnrichmentRunStatus | null) ?? 'succeeded',
     contactPoints,
     rawMetadata,
+  }
+}
+
+export async function runApifyContactEnrichment(input: {
+  website: string
+  actorId: string
+  token: string
+}): Promise<ApifyContactEnrichmentRunResult> {
+  const url = new URL(
+    `https://api.apify.com/v2/acts/${encodeURIComponent(input.actorId)}/run-sync-get-dataset-items`,
+  )
+  url.searchParams.set('token', input.token)
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      startUrls: [{ url: input.website }],
+      website: input.website,
+    }),
+  })
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(`Apify contact enrichment failed: ${message || response.statusText}`)
+  }
+
+  const payload = (await response.json()) as unknown
+  const rawItems = Array.isArray(payload) ? payload : [payload]
+  const normalized = rawItems
+    .map((item) => normalizeApifyContactEnrichmentResult(item))
+    .filter((item): item is NormalizedContactEnrichmentResult => item !== null)
+
+  const contacts = normalized.flatMap((result) =>
+    result.contactPoints.map((contact) => ({
+      type: contact.contactType,
+      value: contact.value,
+      label: contact.label,
+      sourceUrl: contact.sourceUrl,
+      confidence: contact.confidenceScore,
+    })),
+  )
+
+  return {
+    provider: 'apify',
+    actorId: input.actorId,
+    website: input.website,
+    contacts,
+    rawItems,
   }
 }

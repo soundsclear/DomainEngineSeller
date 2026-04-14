@@ -5,7 +5,6 @@ export interface ClosingDecisionInput {
   paymentSecured: boolean
   buyerUsesXel: boolean
   buyerApprovalState: 'pending' | 'approved' | 'disputed'
-  explicitInvoiceTransferApproval?: boolean
 }
 
 export interface ClosingDecisionResult {
@@ -29,14 +28,6 @@ export function determineClosingNextStep(input: ClosingDecisionInput): ClosingDe
       nextStatus: 'failed',
       manualCheckpointRequired: true,
       reason: 'Buyer approval is disputed and needs intervention.',
-    }
-  }
-
-  if (input.closingMethod === 'stripe_invoice_manual_transfer' && !input.explicitInvoiceTransferApproval) {
-    return {
-      nextStatus: 'payment_secured',
-      manualCheckpointRequired: true,
-      reason: 'Stripe invoice flow still needs explicit transfer approval.',
     }
   }
 

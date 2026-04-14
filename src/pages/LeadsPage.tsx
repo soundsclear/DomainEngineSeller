@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Users } from 'lucide-react'
 import { EmptyState } from '@/components/EmptyState'
 import { SectionCard } from '@/components/SectionCard'
@@ -12,6 +12,8 @@ import {
   generateLeadOutreachDraft,
   saveLeadOutreachWorkflow,
   sendOutreachWorkflowNow,
+  createLeadApi,
+  updateLeadDoNotContactApi,
   type OutreachWorkflowRecord,
 } from '@/lib/api'
 import type { OutreachDraft } from '@/lib/outreach-draft'
@@ -65,6 +67,10 @@ export function LeadsPage() {
   const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>([])
   const [workflowActionLoadingId, setWorkflowActionLoadingId] = useState<string | null>(null)
   const [batchSendLoading, setBatchSendLoading] = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
+  const [createForm, setCreateForm] = useState({ companyName: '', website: '', country: '' })
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [createSubmitting, setCreateSubmitting] = useState(false)
   const toast = useToast()
 
   function load() {
@@ -186,6 +192,37 @@ export function LeadsPage() {
   async function refreshWorkflows() {
     const response = await fetchOutreachWorkflows()
     setWorkflows(response.items)
+  }
+
+  async function handleCreateLead(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setCreateSubmitting(true)
+    setCreateError(null)
+    try {
+      const result = await createLeadApi({
+        companyName: createForm.companyName,
+        website: createForm.website || undefined,
+        country: createForm.country || undefined,
+      })
+      setLeads((current) => [...current, result.item as unknown as LeadRecord])
+      setCreateForm({ companyName: '', website: '', country: '' })
+      setShowCreate(false)
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Kon de lead niet aanmaken.')
+    } finally {
+      setCreateSubmitting(false)
+    }
+  }
+
+  async function handleToggleDoNotContact(leadId: string, current: boolean) {
+    try {
+      await updateLeadDoNotContactApi(leadId, !current)
+      setLeads((items) =>
+        items.map((lead) => (lead.id === leadId ? { ...lead, doNotContact: !current } : lead)),
+      )
+    } catch {
+      // non-critical, UI stays consistent on next load
+    }
   }
 
   async function handleGenerateDraft() {
@@ -351,23 +388,20 @@ export function LeadsPage() {
     )
   }
 
-  if (leads.length === 0) {
-    return (
-      <EmptyState
-        icon={Users}
-        title="No leads yet"
-        description="Voeg buyer discovery records toe om outreach te starten."
-      />
-    )
-  }
-
   return (
     <div className="space-y-6">
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-      <SectionCard
-        title="Buyer discovery"
-        subtitle="Kies een lead en genereer een conceptmail vanuit de bestaande outreach guardrails. Contact uitsturen blijft hard geblokkeerd."
-      >
+        <SectionCard
+          title="Buyer discovery"
+          subtitle="Kies een lead en genereer een conceptmail vanuit de bestaande outreach guardrails. Contact uitsturen blijft hard geblokkeerd."
+        >
+          {leads.length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title="No leads yet"
+              description="Voeg handmatig een lead toe of laat buyer discovery eerst records aanmaken."
+            />
+          ) : (
           <div className="space-y-3">
             {leads.map((lead) => {
               const active = lead.id === selectedLeadId
@@ -410,12 +444,13 @@ export function LeadsPage() {
               )
             })}
           </div>
+          )}
         </SectionCard>
 
-      <SectionCard
-        title="Outreach draft"
-        subtitle="Draft-first workflow: enrichment en drafts blijven beschikbaar, maar contactversturen staat hard op slot."
-      >
+        <SectionCard
+          title="Outreach draft"
+          subtitle="Draft-first workflow: enrichment en drafts blijven beschikbaar, maar contactversturen staat hard op slot."
+        >
           <div
             className="mb-5 rounded-xl border px-4 py-3 text-[14px]"
             style={{
@@ -575,9 +610,98 @@ export function LeadsPage() {
                 </div>
               )}
             </div>
-          ) : null}
+          ) : (
+            <div
+              className="rounded-lg px-4 py-6 text-[14px]"
+              style={{ border: '1px dashed var(--color-border)', color: 'var(--color-text-secondary)' }}
+            >
+              Selecteer of maak eerst een lead aan om een outreach draft te genereren.
+            </div>
+          )}
         </SectionCard>
       </div>
+
+      <SectionCard
+        title="Leads"
+        subtitle="Potentiële kopers per domein. Outreach is altijd draft-first."
+      >
+        <div className="mb-4 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setShowCreate((v) => !v)}
+            className="rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white"
+          >
+            {showCreate ? 'Annuleren' : 'Nieuwe lead'}
+          </button>
+        </div>
+
+        {showCreate && (
+          <form onSubmit={handleCreateLead} className="mb-4 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <label className="block space-y-1 text-sm text-slate-700">
+              <span>Bedrijfsnaam *</span>
+              <input
+                required
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={createForm.companyName}
+                onChange={(e) => setCreateForm((f) => ({ ...f, companyName: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-sm text-slate-700">
+              <span>Website</span>
+              <input
+                type="url"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={createForm.website}
+                onChange={(e) => setCreateForm((f) => ({ ...f, website: e.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1 text-sm text-slate-700">
+              <span>Land</span>
+              <input
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={createForm.country}
+                onChange={(e) => setCreateForm((f) => ({ ...f, country: e.target.value }))}
+              />
+            </label>
+            {createError && <p className="text-sm text-rose-700">{createError}</p>}
+            <button
+              type="submit"
+              disabled={createSubmitting}
+              className="rounded-lg bg-emerald-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              {createSubmitting ? 'Opslaan...' : 'Lead aanmaken'}
+            </button>
+          </form>
+        )}
+
+        {leads.length === 0 ? (
+          <div
+            className="rounded-lg px-4 py-6 text-[14px]"
+            style={{ border: '1px dashed var(--color-border)', color: 'var(--color-text-secondary)' }}
+          >
+            Nog geen leads aanwezig. Gebruik "Nieuwe lead" om de lijst te starten.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {leads.map((lead) => (
+              <div key={lead.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">{lead.companyName}</p>
+                  {lead.website && <p className="text-xs text-slate-500">{lead.website}</p>}
+                </div>
+                <label className="flex items-center gap-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={lead.doNotContact}
+                    onChange={() => handleToggleDoNotContact(lead.id, lead.doNotContact)}
+                  />
+                  Do not contact
+                </label>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
 
       <SectionCard
         title="Outreach queue"

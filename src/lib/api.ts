@@ -205,6 +205,23 @@ export interface TransferTaskRecord {
   checklistJson: string
 }
 
+export interface ProviderTransactionRecord {
+  id: string
+  dealId: string
+  provider: string
+  providerReference: string
+  status: string
+  amount: number | null
+  createdAt: number
+}
+
+export interface CreateProviderTransactionPayload {
+  provider: 'escrow_com' | 'sedo' | 'afternic' | 'other'
+  providerReference: string
+  status: string
+  amount?: number
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: {
@@ -245,6 +262,35 @@ export function fetchPublicDomain(domainId: string) {
 
 export function fetchLeads() {
   return fetchJson<{ items: LeadRecord[]; meta: { total: number; doNotContact: number } }>('/api/leads')
+}
+
+export interface CreateLeadPayload {
+  companyName: string
+  website?: string
+  domainId?: string
+  country?: string
+}
+
+export function createLeadApi(payload: CreateLeadPayload) {
+  return fetchJson<{ ok: boolean; item: DomainLeadRecord }>('/api/leads', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateLeadDoNotContactApi(leadId: string, doNotContact: boolean) {
+  return fetchJson<{ ok: boolean }>(`/api/leads/${leadId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ doNotContact }),
+  })
+}
+
+export function deleteLeadApi(leadId: string) {
+  return fetchJson<{ ok: boolean }>(`/api/leads/${leadId}`, {
+    method: 'DELETE',
+  })
 }
 
 export function submitInquiry(payload: InquiryPayload) {
@@ -628,4 +674,21 @@ export function updateSetting(key: string, value: string) {
     method: 'PUT',
     body: JSON.stringify({ value }),
   })
+}
+
+export function fetchProviderTransactions(dealId: string) {
+  return fetchJson<{ items: ProviderTransactionRecord[] }>(
+    `/api/deals/${dealId}/provider-transactions`,
+  )
+}
+
+export function createProviderTransactionApi(dealId: string, payload: CreateProviderTransactionPayload) {
+  return fetchJson<{ ok: boolean; item: ProviderTransactionRecord }>(
+    `/api/deals/${dealId}/provider-transactions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  )
 }
