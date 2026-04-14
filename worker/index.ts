@@ -3,7 +3,6 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { parseDomainCsvRows, type DomainCsvRow } from '../src/lib/csv-import'
 import { determineClosingNextStep } from '../src/lib/closing-rules'
-import { demoLeads } from '../src/lib/demo-data'
 import { generatePriceRecommendation } from '../src/lib/pricing-engine'
 import { buildLeadOutreachDraft } from '../src/server/outreach'
 import { createLeadOutreachWorkflow } from '../src/server/outreach-workflow'
@@ -11,6 +10,10 @@ import { listOutreachWorkflows, saveOutreachWorkflow } from '../src/server/db/ou
 import { countInboundInquiries, listInboundInquiries, saveInboundInquiry } from '../src/server/db/inquiry-repository'
 import { createDealFromInquiry, listDeals, progressDeal } from '../src/server/db/deal-repository'
 import { listTransferTasks } from '../src/server/db/transfer-task-repository'
+import {
+  listProviderTransactions,
+  createProviderTransaction,
+} from '../src/server/db/provider-transaction-repository'
 import {
   createDomain,
   deleteDomain,
@@ -26,7 +29,13 @@ import {
   listPublicDomains,
   upsertDomainPageContent,
 } from '../src/server/db/public-domain-repository'
-import { listLeadsForDomain } from '../src/server/db/lead-repository'
+import {
+  listLeadsForDomain,
+  listAllLeads,
+  createManualLead,
+  updateLeadDoNotContact,
+  deleteLead,
+} from '../src/server/db/lead-repository'
 import { discoverAndStoreBuyerLeads } from '../src/server/ai/buyer-discovery'
 import { generateAndStoreDomainSeoContent } from '../src/server/ai/seo-generation'
 import { sendInquiryNotification, sendTestEmail } from '../src/server/email'
@@ -66,14 +75,13 @@ const outreachDraftRequestSchema = z.object({
 })
 
 const createDealFromInquirySchema = z.object({
-  closingMethod: z.enum(['escrow_com', 'sedo_transfer', 'afternic_network', 'stripe_invoice_manual_transfer']),
+  closingMethod: z.enum(['escrow_com', 'sedo_transfer', 'afternic_network']),
 })
 
 const progressDealSchema = z.object({
   paymentSecured: z.boolean(),
   buyerUsesXel: z.boolean(),
   buyerApprovalState: z.enum(['pending', 'approved', 'disputed']),
-  explicitInvoiceTransferApproval: z.boolean().optional(),
   buyerXelAccount: z.string().optional(),
   buyerRegistrar: z.string().optional(),
 })
@@ -295,17 +303,56 @@ app.delete('/api/domains/:domainId', async (c) => {
   }
 })
 
-// --- Leads (demo data retained until Phase 1 lead management is built) ---
+// --- Leads ---
 
-app.get('/api/leads', (c) =>
-  c.json({
-    items: demoLeads,
+app.get('/api/leads', async (c) => {
+  const items = await listAllLeads(c.env.DB)
+  return c.json({
+    items,
     meta: {
-      total: demoLeads.length,
-      doNotContact: demoLeads.filter((lead) => lead.doNotContact).length,
+      total: items.length,
+      doNotContact: items.filter((lead) => lead.doNotContact).length,
     },
-  }),
-)
+  })
+})
+
+const createLeadSchema = z.object({
+  companyName: z.string().min(1),
+  website: z.string().url().optional(),
+  domainId: z.string().optional(),
+  country: z.string().optional(),
+})
+
+app.post('/api/leads', zValidator('json', createLeadSchema), async (c) => {
+  try {
+    const lead = await createManualLead(c.env.DB, c.req.valid('json'))
+    return c.json({ ok: true, item: lead }, 201)
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Could not create lead.' }, 400)
+  }
+})
+
+const updateLeadSchema = z.object({
+  doNotContact: z.boolean(),
+})
+
+app.patch('/api/leads/:leadId', zValidator('json', updateLeadSchema), async (c) => {
+  try {
+    await updateLeadDoNotContact(c.env.DB, c.req.param('leadId'), c.req.valid('json').doNotContact)
+    return c.json({ ok: true })
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Could not update lead.' }, 400)
+  }
+})
+
+app.delete('/api/leads/:leadId', async (c) => {
+  try {
+    await deleteLead(c.env.DB, c.req.param('leadId'))
+    return c.json({ ok: true })
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Could not delete lead.' }, 400)
+  }
+})
 
 app.post(
   '/api/leads/:leadId/outreach-draft',
@@ -428,16 +475,43 @@ app.post('/api/deals/:dealId/progress', zValidator('json', progressDealSchema), 
   }
 })
 
+const createProviderTransactionSchema = z.object({
+  provider: z.enum(['escrow_com', 'sedo', 'afternic', 'other']),
+  providerReference: z.string().min(1),
+  status: z.string().min(1),
+  amount: z.coerce.number().int().positive().optional(),
+})
+
+app.get('/api/deals/:dealId/provider-transactions', async (c) => {
+  const items = await listProviderTransactions(c.env.DB, c.req.param('dealId'))
+  return c.json({ items })
+})
+
+app.post(
+  '/api/deals/:dealId/provider-transactions',
+  zValidator('json', createProviderTransactionSchema),
+  async (c) => {
+    try {
+      const item = await createProviderTransaction(c.env.DB, {
+        dealId: c.req.param('dealId'),
+        ...c.req.valid('json'),
+      })
+      return c.json({ ok: true, item }, 201)
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Could not record transaction.' }, 400)
+    }
+  },
+)
+
 app.post(
   '/api/deals/next-step',
   zValidator(
     'json',
     z.object({
-      closingMethod: z.enum(['escrow_com', 'sedo_transfer', 'afternic_network', 'stripe_invoice_manual_transfer']),
+      closingMethod: z.enum(['escrow_com', 'sedo_transfer', 'afternic_network']),
       paymentSecured: z.boolean(),
       buyerUsesXel: z.boolean(),
       buyerApprovalState: z.enum(['pending', 'approved', 'disputed']),
-      explicitInvoiceTransferApproval: z.boolean().optional(),
     }),
   ),
   async (c) => {
