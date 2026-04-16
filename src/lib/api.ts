@@ -599,6 +599,16 @@ export async function draftInquiryReplyApi(
   )
 }
 
+export async function sendInquiryReplyApi(
+  inquiryId: string,
+  messageId?: string,
+): Promise<{ ok: boolean; messageId: string }> {
+  return fetchJson<{ ok: boolean; messageId: string }>(
+    `/api/inquiries/${inquiryId}/send-reply`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId }) },
+  )
+}
+
 export async function negotiateInquiryCounterApi(
   inquiryId: string,
 ): Promise<{

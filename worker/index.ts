@@ -17,7 +17,7 @@ import {
   saveOutreachWorkflow,
 } from '../src/server/db/outreach-repository'
 import { getSetting, listSettings, upsertSetting } from '../src/server/db/settings-repository'
-import { countInboundInquiries, listInboundInquiries, saveInboundInquiry, getInquiryWithThread, updateInquiryStatus, updateInquiryClassification, saveReplyDraft, saveNegotiationDraft, type NegotiationDraftPayload } from '../src/server/db/inquiry-repository'
+import { countInboundInquiries, listInboundInquiries, saveInboundInquiry, getInquiryWithThread, updateInquiryStatus, updateInquiryClassification, saveReplyDraft, saveNegotiationDraft, markMessageSent, type NegotiationDraftPayload } from '../src/server/db/inquiry-repository'
 import { runApifyContactEnrichment } from '../src/server/ai/apify-contact-enrichment'
 import { classifyInquiry, draftReply, negotiateCounter, type InquiryClassification } from '../src/server/ai/inquiry-intelligence'
 import { createAnthropicClientFromEnv } from '../src/server/ai/anthropic'
@@ -1291,6 +1291,39 @@ app.post('/api/inquiries/:id/draft-reply', async (c) => {
   })
 
   return c.json({ ok: true, draft })
+})
+
+app.post('/api/inquiries/:id/send-reply', async (c) => {
+  const inquiryWithThread = await getInquiryWithThread(c.env.DB, c.req.param('id'))
+  if (!inquiryWithThread) return c.json({ error: 'Inquiry not found.' }, 404)
+  if (!inquiryWithThread.inquiry.threadId) {
+    return c.json({ error: 'Inquiry has no associated thread.' }, 400)
+  }
+
+  const { messageId } = (await c.req.json().catch(() => ({}))) as { messageId?: string }
+
+  // Find the message to send: specified messageId or latest unsent draft_reply
+  const candidate = messageId
+    ? inquiryWithThread.messages.find((m) => m.id === messageId && m.classification === 'draft_reply')
+    : [...inquiryWithThread.messages]
+        .reverse()
+        .find((m) => m.classification === 'draft_reply' && m.sentAt === null)
+
+  if (!candidate) return c.json({ error: 'No unsent draft reply found.' }, 400)
+  if (candidate.sentAt !== null) return c.json({ error: 'This draft was already sent.' }, 400)
+
+  const emailConfig = requireOutreachEmailConfig(c.env)
+  await sendOutreachEmail({
+    ...emailConfig,
+    to: inquiryWithThread.inquiry.senderEmail,
+    subject: candidate.subject ?? `Re: domain inquiry`,
+    body: candidate.body,
+  })
+
+  await markMessageSent(c.env.DB, candidate.id)
+  await updateInquiryStatus(c.env.DB, c.req.param('id'), 'replied')
+
+  return c.json({ ok: true, messageId: candidate.id })
 })
 
 app.post('/api/inquiries/:id/negotiate', async (c) => {

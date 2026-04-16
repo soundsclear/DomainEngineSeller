@@ -9,6 +9,7 @@ import {
   fetchInquiryThread,
   markInquiryRead,
   negotiateInquiryCounterApi,
+  sendInquiryReplyApi,
   type InquiryThreadMessage,
   type InquiryWithThreadRecord,
   type NegotiationDraftRecord,
@@ -70,7 +71,8 @@ export function InquiryThreadPage() {
   const [classifying, setClassifying] = useState(false)
   const [drafting, setDrafting] = useState(false)
   const [negotiating, setNegotiating] = useState(false)
-  const [draftResult, setDraftResult] = useState<{ subject: string; body: string } | null>(null)
+  const [sending, setSending] = useState(false)
+  const [draftResult, setDraftResult] = useState<{ id: string; subject: string; body: string; sentAt: number | null } | null>(null)
   const [negotiationResult, setNegotiationResult] = useState<NegotiationDraftRecord | null>(null)
   const [dealState, setDealState] = useState<{ dealId: string; created: boolean } | null>(null)
   const toast = useToast()
@@ -93,7 +95,7 @@ export function InquiryThreadPage() {
           .find((message) => message.classification === 'draft_reply')
         setDraftResult(
           latestDraft && latestDraft.subject
-            ? { subject: latestDraft.subject, body: latestDraft.body }
+            ? { id: latestDraft.id, subject: latestDraft.subject, body: latestDraft.body, sentAt: latestDraft.sentAt }
             : null,
         )
 
@@ -227,7 +229,7 @@ export function InquiryThreadPage() {
               setDrafting(true)
               try {
                 const result = await draftInquiryReplyApi(inquiryId!)
-                setDraftResult(result.draft)
+                setDraftResult({ ...result.draft, sentAt: null })
                 setData((prev) =>
                   prev
                     ? {
@@ -321,7 +323,7 @@ export function InquiryThreadPage() {
       {draftResult ? (
         <SectionCard
           title="Draft reply"
-          subtitle="Bekijk en verstuur handmatig via je e-mailclient - nooit automatisch verzonden."
+          subtitle={draftResult.sentAt ? 'Verzonden.' : 'Controleer het concept en verstuur.'}
         >
           <p className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>Subject: {draftResult.subject}</p>
           <pre
@@ -330,9 +332,49 @@ export function InquiryThreadPage() {
           >
             {draftResult.body}
           </pre>
-          <p className="mt-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-            Dit concept is opgeslagen in de thread. Kopieer en verstuur via je e-mailclient.
-          </p>
+          {draftResult.sentAt ? (
+            <p className="mt-3 text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+              Verzonden op {new Date(draftResult.sentAt).toLocaleString('nl-NL')}
+            </p>
+          ) : (
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                type="button"
+                disabled={sending}
+                onClick={async () => {
+                  setSending(true)
+                  try {
+                    await sendInquiryReplyApi(inquiryId!, draftResult.id)
+                    const now = Date.now()
+                    setDraftResult((prev) => prev ? { ...prev, sentAt: now } : prev)
+                    setData((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            inquiry: { ...prev.inquiry, status: 'replied' },
+                            messages: prev.messages.map((m) =>
+                              m.id === draftResult.id ? { ...m, sentAt: now } : m,
+                            ),
+                          }
+                        : prev,
+                    )
+                    toast.show('Reply verzonden.', 'success')
+                  } catch (err) {
+                    toast.show(err instanceof Error ? err.message : 'Verzenden mislukt.', 'error')
+                  } finally {
+                    setSending(false)
+                  }
+                }}
+                className="rounded-lg px-5 py-2 text-[14px] font-medium text-white disabled:opacity-50"
+                style={{ backgroundColor: 'var(--color-accent)' }}
+              >
+                {sending ? 'Verzenden...' : 'Verstuur reply'}
+              </button>
+              <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                Wordt verzonden via Resend naar {inquiry.senderEmail}
+              </p>
+            </div>
+          )}
         </SectionCard>
       ) : null}
 

@@ -405,6 +405,12 @@ export async function saveReplyDraft(
   return { id, subject: input.subject, body: input.body }
 }
 
+export async function markMessageSent(binding: D1Database, messageId: string): Promise<void> {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  await db.update(messages).set({ sentAt: Date.now() }).where(eq(messages.id, messageId))
+}
+
 export async function saveNegotiationDraft(
   binding: D1Database,
   input: { threadId: string; payload: NegotiationDraftPayload },
