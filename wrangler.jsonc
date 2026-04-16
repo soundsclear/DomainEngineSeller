@@ -28,6 +28,8 @@
     "RESEND_API_KEY": "",
     "ADMIN_NOTIFY_EMAIL": "",
     "EMAIL_FROM_ADDRESS": "onboarding@resend.dev",
-    "TEST_EMAIL_OVERRIDE": ""
+    "TEST_EMAIL_OVERRIDE": "",
+    "ADMIN_PASSWORD": "",
+    "ADMIN_SESSION_SECRET": ""
   }
 }

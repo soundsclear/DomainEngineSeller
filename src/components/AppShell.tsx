@@ -1,7 +1,7 @@
-import type { PropsWithChildren } from 'react'
-import { BarChart3, BadgeEuro, Globe2, Inbox, Mail, Settings } from 'lucide-react'
+import { useEffect, type PropsWithChildren } from 'react'
+import { BarChart3, BadgeEuro, Globe2, Inbox, LogOut, Mail, Settings } from 'lucide-react'
 import { clsx } from 'clsx'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 
 const navItems = [
   { to: '/admin', label: 'Dashboard', icon: BarChart3, exact: true },
@@ -31,7 +31,19 @@ function getPageTitle(pathname: string): string {
 
 export function AppShell({ children }: PropsWithChildren) {
   const location = useLocation()
+  const navigate = useNavigate()
   const title = getPageTitle(location.pathname)
+
+  useEffect(() => {
+    fetch('/api/admin/me').then((res) => {
+      if (res.status === 401) navigate('/login')
+    }).catch(() => {})
+  }, [navigate])
+
+  async function handleLogout() {
+    await fetch('/api/admin/logout', { method: 'POST' })
+    navigate('/login')
+  }
 
   return (
     <div className="flex min-h-screen" style={{ backgroundColor: 'var(--color-bg)' }}>
@@ -83,6 +95,16 @@ export function AppShell({ children }: PropsWithChildren) {
             )
           })}
         </nav>
+
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="mx-2 mb-3 flex items-center gap-2.5 rounded-lg px-3 text-[14px] h-9 transition-colors hover:bg-red-50 hover:text-red-700"
+          style={{ color: 'var(--color-text-secondary)' }}
+        >
+          <LogOut className="h-4 w-4 shrink-0" />
+          Uitloggen
+        </button>
       </aside>
 
       {/* Content area */}

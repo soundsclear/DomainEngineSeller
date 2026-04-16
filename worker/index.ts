@@ -18,6 +18,7 @@ import {
 } from '../src/server/db/outreach-repository'
 import { getSetting, listSettings, upsertSetting } from '../src/server/db/settings-repository'
 import { countInboundInquiries, listInboundInquiries, saveInboundInquiry, getInquiryWithThread, updateInquiryStatus, updateInquiryClassification, saveReplyDraft, saveNegotiationDraft, markMessageSent, type NegotiationDraftPayload } from '../src/server/db/inquiry-repository'
+import { writeAudit, listAuditLog } from '../src/server/db/audit-repository'
 import { runApifyContactEnrichment } from '../src/server/ai/apify-contact-enrichment'
 import { classifyInquiry, draftReply, negotiateCounter, type InquiryClassification } from '../src/server/ai/inquiry-intelligence'
 import { createAnthropicClientFromEnv } from '../src/server/ai/anthropic'
@@ -77,6 +78,8 @@ type Bindings = {
   APIFY_API_TOKEN?: string
   APIFY_CONTACT_SCRAPER_ACTOR_ID?: string
   OUTREACH_CONTACT_ENABLED?: string
+  ADMIN_PASSWORD?: string
+  ADMIN_SESSION_SECRET?: string
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -456,6 +459,73 @@ const csvImportSchema = z.object({
       notes: z.string(),
     }),
   ),
+})
+
+// --- Admin auth helpers ---
+
+async function signPayload(payload: string, secret: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
+  return btoa(String.fromCharCode(...new Uint8Array(sig)))
+}
+
+async function buildSessionCookie(secret: string): Promise<string> {
+  const payload = JSON.stringify({ exp: Date.now() + 8 * 3600 * 1000 })
+  const b64 = btoa(payload)
+  const sig = await signPayload(b64, secret)
+  return `admin_session=${b64}.${sig}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`
+}
+
+async function verifySession(cookieHeader: string | null, secret: string): Promise<boolean> {
+  if (!cookieHeader) return false
+  const match = cookieHeader.match(/admin_session=([^;]+)/)
+  if (!match) return false
+  const [b64, sig] = match[1].split('.')
+  if (!b64 || !sig) return false
+  const expected = await signPayload(b64, secret)
+  if (expected !== sig) return false
+  try {
+    const { exp } = JSON.parse(atob(b64)) as { exp: number }
+    return Date.now() < exp
+  } catch { return false }
+}
+
+app.post('/api/admin/login', async (c) => {
+  const { ADMIN_PASSWORD, ADMIN_SESSION_SECRET } = c.env
+  if (!ADMIN_PASSWORD || !ADMIN_SESSION_SECRET) {
+    return c.json({ error: 'Auth not configured.' }, 503)
+  }
+  const body = await c.req.json<{ password?: string }>()
+  if (body.password !== ADMIN_PASSWORD) {
+    return c.json({ error: 'Invalid password.' }, 401)
+  }
+  const cookie = await buildSessionCookie(ADMIN_SESSION_SECRET)
+  c.header('Set-Cookie', cookie)
+  return c.json({ ok: true })
+})
+
+app.post('/api/admin/logout', (c) => {
+  c.header('Set-Cookie', 'admin_session=; Max-Age=0; Path=/')
+  return c.json({ ok: true })
+})
+
+app.get('/api/admin/me', async (c) => {
+  const { ADMIN_SESSION_SECRET } = c.env
+  if (!ADMIN_SESSION_SECRET) return c.json({ error: 'Auth not configured.' }, 503)
+  const valid = await verifySession(c.req.header('Cookie') ?? null, ADMIN_SESSION_SECRET)
+  if (!valid) return c.json({ error: 'Not authenticated.' }, 401)
+  return c.json({ ok: true })
+})
+
+app.get('/api/admin/audit', async (c) => {
+  const entries = await listAuditLog(c.env.DB)
+  return c.json({ items: entries })
 })
 
 // --- Health ---
@@ -1137,6 +1207,8 @@ app.post('/api/inquiries', zValidator('json', inquiryInputSchema), async (c) => 
 
     const saved = await saveInboundInquiry(c.env.DB, payload)
 
+    writeAudit(c.env.DB, { entityType: 'inquiry', entityId: saved.inquiry.id, action: 'inquiry_received', actor: 'public', metadata: { domainName: saved.domainName, senderEmail: saved.inquiry.senderEmail } }).catch(() => {})
+
     const apiKey = c.env.RESEND_API_KEY
     const to = c.env.ADMIN_NOTIFY_EMAIL
     const from = c.env.EMAIL_FROM_ADDRESS
@@ -1188,10 +1260,12 @@ app.get('/api/transfer-tasks', async (c) => {
 
 app.post('/api/inquiries/:inquiryId/create-deal', zValidator('json', createDealFromInquirySchema), async (c) => {
   try {
+    const body = c.req.valid('json')
     const result = await createDealFromInquiry(c.env.DB, {
       inquiryId: c.req.param('inquiryId'),
-      ...c.req.valid('json'),
+      ...body,
     })
+    writeAudit(c.env.DB, { entityType: 'deal', entityId: result.dealId, action: 'deal_created', actor: 'admin', metadata: { closingMethod: body.closingMethod } }).catch(() => {})
     return c.json({ ok: true, ...result }, result.created ? 201 : 200)
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : 'Could not create deal.' }, 400)
@@ -1249,6 +1323,8 @@ app.post('/api/inquiries/:id/classify', async (c) => {
     result.classification,
     result.reason,
   )
+
+  writeAudit(c.env.DB, { entityType: 'inquiry', entityId: c.req.param('id'), action: 'inquiry_classified', actor: 'admin', metadata: { classification: result.classification } }).catch(() => {})
 
   return c.json({ ok: true, classification: result.classification, reason: result.reason })
 })
@@ -1322,6 +1398,8 @@ app.post('/api/inquiries/:id/send-reply', async (c) => {
 
   await markMessageSent(c.env.DB, candidate.id)
   await updateInquiryStatus(c.env.DB, c.req.param('id'), 'replied')
+
+  writeAudit(c.env.DB, { entityType: 'inquiry', entityId: c.req.param('id'), action: 'reply_sent', actor: 'admin', metadata: { to: inquiryWithThread.inquiry.senderEmail } }).catch(() => {})
 
   return c.json({ ok: true, messageId: candidate.id })
 })
@@ -1400,10 +1478,12 @@ app.post('/api/inquiries/:id/negotiate', async (c) => {
 
 app.post('/api/deals/:dealId/progress', zValidator('json', progressDealSchema), async (c) => {
   try {
+    const dealId = c.req.param('dealId')
     const decision = await progressDeal(c.env.DB, {
-      dealId: c.req.param('dealId'),
+      dealId,
       ...c.req.valid('json'),
     })
+    writeAudit(c.env.DB, { entityType: 'deal', entityId: dealId, action: 'deal_progressed', actor: 'admin', metadata: { nextStatus: decision.decision.nextStatus } }).catch(() => {})
     return c.json({ ok: true, decision })
   } catch (error) {
     return c.json({ error: error instanceof Error ? error.message : 'Could not progress deal.' }, 400)
