@@ -143,6 +143,7 @@ describe('worker routes', () => {
   const env = {
     DB: {} as D1Database,
     OUTREACH_AUTO_SEND_ENABLED: 'false',
+    OUTREACH_CONTACT_ENABLED: 'true',
     RESEND_API_KEY: 'resend-test-key',
     ADMIN_NOTIFY_EMAIL: 'admin@example.com',
     EMAIL_FROM_ADDRESS: 'seller@example.com',

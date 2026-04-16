@@ -4,6 +4,22 @@ import { getDb } from './client'
 import { ensureInquiryIntelligenceColumns, ensureOutreachSchema } from './ensure-outreach-schema'
 import { contacts, domains, followupTasks, inboundInquiries, leads, messages, outreachThreads } from './schema'
 
+const SUPPRESSION_PATTERNS = [
+  'do not contact',
+  'do-not-contact',
+  'unsubscribe',
+  'stop emailing',
+  'remove me',
+  'geen contact',
+  'niet meer mailen',
+  'uitschrijven',
+]
+
+function shouldSuppressContact(message: string) {
+  const normalized = message.toLowerCase()
+  return SUPPRESSION_PATTERNS.some((pattern) => normalized.includes(pattern))
+}
+
 export interface SaveInboundInquiryInput {
   domainId: string
   senderName: string
@@ -146,6 +162,7 @@ export async function saveInboundInquiry(binding: D1Database, input: SaveInbound
   const leadId = existingContact?.leadId ?? `lead-inbound-${crypto.randomUUID()}`
   const contactName = input.senderName.trim()
   const companyName = existingContact?.companyName ?? input.senderName.trim()
+  const doNotContact = shouldSuppressContact(input.message)
 
   if (!existingContact) {
     await db.insert(leads).values({
@@ -155,7 +172,7 @@ export async function saveInboundInquiry(binding: D1Database, input: SaveInbound
       website: null,
       buyerFitReason: 'Inbound inquiry from public domain page.',
       priorityScore: input.offerAmount ? 75 : 55,
-      doNotContact: false,
+      doNotContact,
       country: null,
       source: 'inbound-inquiry',
       createdAt: now,
@@ -170,6 +187,8 @@ export async function saveInboundInquiry(binding: D1Database, input: SaveInbound
       contactPageUrl: null,
       createdAt: now,
     })
+  } else if (doNotContact) {
+    await db.update(leads).set({ doNotContact: true }).where(eq(leads.id, leadId))
   }
 
   const threadId = `thread-inbound-${crypto.randomUUID()}`

@@ -51,6 +51,7 @@ import {
   createManualLead,
   updateLeadDoNotContact,
   deleteLead,
+  upsertLeadContactSnapshot,
 } from '../src/server/db/lead-repository'
 import {
   completeLeadEnrichmentRun,
@@ -125,6 +126,31 @@ function getSettingStringValue(setting: Awaited<ReturnType<typeof getSetting>>) 
 
   const trimmed = setting.value.trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+function pickBestApifyContactSnapshot(
+  companyName: string,
+  website: string,
+  contacts: Array<{
+    type: string
+    value: string
+    label?: string | null
+    sourceUrl?: string | null
+    confidence: number
+  }>,
+) {
+  const ranked = [...contacts].sort((left, right) => right.confidence - left.confidence)
+  const bestEmail = ranked.find((contact) => contact.type === 'email') ?? null
+  const bestNamedContact =
+    ranked.find((contact) => Boolean(contact.label?.trim()) && contact.type === 'email') ??
+    ranked.find((contact) => Boolean(contact.label?.trim())) ??
+    null
+
+  return {
+    contactName: bestNamedContact?.label?.trim() || companyName,
+    contactEmail: bestEmail?.value ?? null,
+    contactPageUrl: bestEmail?.sourceUrl ?? ranked[0]?.sourceUrl ?? website,
+  }
 }
 
 async function getOutreachAutoSendDailyLimit(binding: D1Database) {
@@ -612,6 +638,13 @@ app.post('/api/domains/:domainId/leads/:leadId/enrich-contacts', async (c) => {
       contacts: result.contacts,
       rawPayloadJson: JSON.stringify(result.rawItems),
     })
+    const snapshot = pickBestApifyContactSnapshot(lead.companyName, lead.website, result.contacts)
+    await upsertLeadContactSnapshot(c.env.DB, {
+      leadId,
+      contactName: snapshot.contactName,
+      contactEmail: snapshot.contactEmail,
+      contactPageUrl: snapshot.contactPageUrl,
+    })
 
     return c.json({
       ok: true,
@@ -620,6 +653,7 @@ app.post('/api/domains/:domainId/leads/:leadId/enrich-contacts', async (c) => {
         provider: result.provider,
         actorId: result.actorId,
         website: result.website,
+        enriched: 1,
         contactsFound: result.contacts.length,
       },
     })
@@ -683,6 +717,13 @@ app.post('/api/domains/:domainId/lead-enrichment/run', zValidator('json', leadEn
         contacts: result.contacts,
         rawPayloadJson: JSON.stringify(result.rawItems),
       })
+      const snapshot = pickBestApifyContactSnapshot(lead.companyName, lead.website, result.contacts)
+      await upsertLeadContactSnapshot(c.env.DB, {
+        leadId,
+        contactName: snapshot.contactName,
+        contactEmail: snapshot.contactEmail,
+        contactPageUrl: snapshot.contactPageUrl,
+      })
 
       results.push({
         leadId,
@@ -700,6 +741,11 @@ app.post('/api/domains/:domainId/lead-enrichment/run', zValidator('json', leadEn
   return c.json({
     ok: true,
     items,
+    meta: {
+      enriched: results.filter((item) => item.ok).length,
+      contactsFound: results.reduce((sum, item) => sum + (item.contactsFound ?? 0), 0),
+      skipped: results.filter((item) => !item.ok).length,
+    },
     summary: {
       requested: requestedLeadIds.length,
       succeeded: results.filter((item) => item.ok).length,
@@ -839,12 +885,23 @@ app.post(
 
 app.post('/api/domains/:domainId/buyer-discovery', async (c) => {
   try {
+    const apifyToken =
+      c.env.APIFY_API_TOKEN?.trim() ||
+      getSettingStringValue(await getSetting(c.env.DB, 'APIFY_API_TOKEN')) ||
+      undefined
+    const apifyActorId =
+      c.env.APIFY_CONTACT_SCRAPER_ACTOR_ID?.trim() ||
+      getSettingStringValue(await getSetting(c.env.DB, 'APIFY_CONTACT_SCRAPER_ACTOR_ID')) ||
+      undefined
+
     const result = await discoverAndStoreBuyerLeads({
       binding: c.env.DB,
       domainId: c.req.param('domainId'),
       ANTHROPIC_API_KEY: c.env.ANTHROPIC_API_KEY,
       ANTHROPIC_MODEL: c.env.ANTHROPIC_MODEL,
       BRAVE_SEARCH_API_KEY: c.env.BRAVE_SEARCH_API_KEY,
+      APIFY_API_TOKEN: apifyToken,
+      APIFY_CONTACT_SCRAPER_ACTOR_ID: apifyActorId,
     })
 
     return c.json({
@@ -856,6 +913,9 @@ app.post('/api/domains/:domainId/buyer-discovery', async (c) => {
         created: result.created.length,
         skipped: result.skippedWebsiteKeys.length,
         searchErrors: result.searchErrors.length,
+        enriched: result.enriched.length,
+        enrichmentErrors: result.enrichmentErrors.length,
+        contactsFound: result.enriched.reduce((sum, item) => sum + item.contactsFound, 0),
       },
     })
   } catch (error) {

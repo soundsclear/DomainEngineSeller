@@ -4,7 +4,7 @@ import { clsx } from 'clsx'
 import { Link, useLocation } from 'react-router-dom'
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: BarChart3, exact: true },
+  { to: '/admin', label: 'Dashboard', icon: BarChart3, exact: true },
   { to: '/admin/inbox', label: 'Inbox', icon: Inbox, exact: false },
   { to: '/admin/deals', label: 'Deals', icon: BadgeEuro, exact: false },
   { to: '/admin/domains', label: 'Domains', icon: Globe2, exact: false },
@@ -13,7 +13,7 @@ const navItems = [
 ]
 
 const pageTitles: Record<string, string> = {
-  '/': 'Dashboard',
+  '/admin': 'Dashboard',
   '/admin/inbox': 'Inbox',
   '/admin/deals': 'Deals',
   '/admin/domains': 'Domains',

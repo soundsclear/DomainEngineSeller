@@ -18,8 +18,9 @@ Domain Seller Engine is a Cloudflare-first, TypeScript-based platform for runnin
 
 The frontend is a Vite React single-page application with React Router. It supports two operating surfaces:
 
-- admin workspace for portfolio, leads, deals, transfer tasks, and migration planning
-- public portfolio site on `/portfolio` with searchable inventory and domain landing pages on `/d/:domainId`
+- public portfolio site on `/` with searchable inventory, plus `/portfolio` as a compatibility route
+- public domain landing pages on `/d/:domainId`
+- admin workspace on `/admin` for portfolio, leads, deals, transfer tasks, and migration planning
 
 Tailwind is used for rapid, consistent styling without locking the project into a heavyweight UI kit.
 
@@ -35,6 +36,13 @@ Cloudflare Workers act as the API and background execution surface. Hono provide
 Business logic should stay in plain TypeScript modules so it can be reused from tests, seeds, scripts, and worker handlers.
 
 LLM integrations and search-provider adapters should also stay in plain TypeScript modules under `src/server/ai/` so Anthropic prompting, structured output parsing, and buyer-discovery orchestration can be tested independently from Worker routes and UI surfaces.
+
+Current live local-development standard:
+
+- frontend on `5173`
+- worker on `8787`
+- Vite proxies `/api` to `127.0.0.1:8787`
+- use `pnpm dev:up` to prevent stale side-worktree servers from hijacking verification
 
 ### Data Layer
 

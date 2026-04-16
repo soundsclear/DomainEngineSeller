@@ -71,6 +71,7 @@ export async function listOutreachWorkflows(binding: D1Database): Promise<Outrea
       leadCompanyName: leads.companyName,
       leadContactName: contacts.contactName,
       leadContactEmail: contacts.contactEmail,
+      leadDoNotContact: leads.doNotContact,
       domainName: domains.domainName,
     })
     .from(outreachThreads)
@@ -133,6 +134,7 @@ export async function listOutreachWorkflows(binding: D1Database): Promise<Outrea
         companyName: row.leadCompanyName,
         contactName: row.leadContactName ?? row.leadCompanyName,
         contactEmail: row.leadContactEmail ?? null,
+        doNotContact: row.leadDoNotContact ?? false,
       },
       domain: {
         id: row.domainId,
@@ -252,7 +254,20 @@ export async function listApprovedOutreachWorkflows(binding: D1Database) {
 
 export async function listSendableApprovedOutreachWorkflows(binding: D1Database) {
   const items = await listApprovedOutreachWorkflows(binding)
-  return items.filter((item) => !!item.lead.contactEmail && item.message.sentAt == null)
+  return items.filter((item) => !!item.lead.contactEmail && item.message.sentAt == null && !item.lead.doNotContact)
+}
+
+export async function listAutoSendReadyOutreachWorkflows(binding: D1Database) {
+  const items = await listSendableApprovedOutreachWorkflows(binding)
+  return items.filter((item) => item.thread.autoSendEnabled)
+}
+
+export async function countOutreachMessagesSentSince(binding: D1Database, since: number) {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  const rows = await db.select({ sentAt: messages.sentAt }).from(messages)
+
+  return rows.filter((row) => row.sentAt != null && row.sentAt >= since).length
 }
 
 function inferFollowUpDays(dueAt: number, createdAt: number) {

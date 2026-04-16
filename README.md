@@ -54,25 +54,33 @@ pnpm check
 pnpm install
 ```
 
-2. Start the frontend:
+2. Start local development safely:
+
+```bash
+pnpm dev:up
+```
+
+This script verifies that ports `5173` and `8787` belong to the current repo and stops stale listeners from side worktrees before launching the frontend and Worker.
+
+3. Start the frontend manually if needed:
 
 ```bash
 pnpm dev
 ```
 
-3. Start the Worker API:
+4. Start the Worker API manually if needed:
 
 ```bash
 pnpm cf:dev
 ```
 
-4. Run tests:
+5. Run tests:
 
 ```bash
 pnpm test:run
 ```
 
-5. Run the full verification pass:
+6. Run the full verification pass:
 
 ```bash
 pnpm check

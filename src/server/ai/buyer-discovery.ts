@@ -4,10 +4,17 @@ import { getDomain } from '../db/domain-repository'
 import {
   insertBuyerDiscoveryLeads,
   listLeadWebsiteKeysForDomain,
+  upsertLeadContactSnapshot,
   type BuyerDiscoveryLeadInput,
   type LeadRecord,
 } from '../db/lead-repository'
+import {
+  completeLeadEnrichmentRun,
+  createLeadEnrichmentRun,
+  failLeadEnrichmentRun,
+} from '../db/lead-enrichment-repository'
 import { createAnthropicClientFromEnv, type StructuredAiClient } from './anthropic'
+import { runApifyContactEnrichment, type ApifyContactEnrichmentRunResult } from './apify-contact-enrichment'
 import { createBraveSearchClientFromEnv, type BraveSearchResultItem, type SearchClient } from './brave-search'
 import type { AnthropicEnvLike, BraveSearchEnvLike } from './config'
 import { buildSemanticGuidance } from './semantic-guidance'
@@ -96,11 +103,30 @@ export interface BuyerDiscoveryRunResult {
   rawLeadCount: number
 }
 
+export interface BuyerDiscoveryAutoEnrichmentRecord {
+  leadId: string
+  website: string
+  contactsFound: number
+  contactEmail: string | null
+  contactName: string | null
+}
+
+export interface BuyerDiscoveryAutoEnrichmentError {
+  leadId: string
+  website: string
+  message: string
+}
+
 export interface DiscoverAndStoreBuyerLeadsInput extends AnthropicEnvLike, BraveSearchEnvLike {
   binding: D1Database
   domainId: string
+  APIFY_API_TOKEN?: string
+  APIFY_CONTACT_SCRAPER_ACTOR_ID?: string
   fetchImpl?: typeof fetch
 }
+
+const AUTO_ENRICH_PRIORITY_MIN = 7
+const AUTO_ENRICH_LIMIT = 5
 
 function buildQueryGenerationPrompt(domain: DomainApiRecord) {
   const semanticGuidance = buildSemanticGuidance(domain)
@@ -326,12 +352,122 @@ function toLeadInsert(domainId: string, candidate: BuyerDiscoveryCandidate): Buy
   }
 }
 
+function pickBestContactSnapshot(
+  companyName: string,
+  result: ApifyContactEnrichmentRunResult,
+): {
+  contactName: string | null
+  contactEmail: string | null
+  contactPageUrl: string | null
+} {
+  const ranked = [...result.contacts].sort((left, right) => right.confidence - left.confidence)
+  const bestEmail = ranked.find((contact) => contact.type === 'email') ?? null
+  const bestNamedContact =
+    ranked.find((contact) => Boolean(contact.label?.trim()) && contact.type === 'email') ??
+    ranked.find((contact) => Boolean(contact.label?.trim())) ??
+    null
+
+  return {
+    contactName: bestNamedContact?.label?.trim() || companyName,
+    contactEmail: bestEmail?.value ?? null,
+    contactPageUrl: bestEmail?.sourceUrl ?? ranked[0]?.sourceUrl ?? result.website,
+  }
+}
+
+async function autoEnrichBuyerDiscoveryLeads(input: {
+  binding: D1Database
+  leads: LeadRecord[]
+  APIFY_API_TOKEN?: string
+  APIFY_CONTACT_SCRAPER_ACTOR_ID?: string
+}): Promise<{
+  enriched: BuyerDiscoveryAutoEnrichmentRecord[]
+  errors: BuyerDiscoveryAutoEnrichmentError[]
+}> {
+  const token = input.APIFY_API_TOKEN?.trim()
+  if (!token) {
+    return { enriched: [], errors: [] }
+  }
+
+  const actorId =
+    input.APIFY_CONTACT_SCRAPER_ACTOR_ID?.trim() || 'poidata/contact-details-scraper'
+  const candidates = input.leads
+    .filter((lead) => lead.website && lead.priorityScore >= AUTO_ENRICH_PRIORITY_MIN)
+    .sort((left, right) => right.priorityScore - left.priorityScore)
+    .slice(0, AUTO_ENRICH_LIMIT)
+
+  const enriched: BuyerDiscoveryAutoEnrichmentRecord[] = []
+  const errors: BuyerDiscoveryAutoEnrichmentError[] = []
+
+  for (const lead of candidates) {
+    const website = lead.website
+    if (!website) {
+      continue
+    }
+
+    const run = await createLeadEnrichmentRun(input.binding, {
+      leadId: lead.id,
+      provider: 'apify',
+      actorId,
+      sourceWebsite: website,
+    })
+
+    try {
+      const result = await runApifyContactEnrichment({
+        website,
+        actorId,
+        token,
+      })
+
+      await completeLeadEnrichmentRun(input.binding, {
+        runId: run.id,
+        contacts: result.contacts,
+        rawPayloadJson: JSON.stringify(result.rawItems),
+      })
+
+      const snapshot = pickBestContactSnapshot(lead.companyName, result)
+      await upsertLeadContactSnapshot(input.binding, {
+        leadId: lead.id,
+        contactName: snapshot.contactName,
+        contactEmail: snapshot.contactEmail,
+        contactPageUrl: snapshot.contactPageUrl,
+      })
+
+      enriched.push({
+        leadId: lead.id,
+        website,
+        contactsFound: result.contacts.length,
+        contactEmail: snapshot.contactEmail,
+        contactName: snapshot.contactName,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown Apify enrichment error.'
+      await failLeadEnrichmentRun(input.binding, {
+        runId: run.id,
+        errorMessage: message,
+      })
+      errors.push({
+        leadId: lead.id,
+        website,
+        message,
+      })
+    }
+  }
+
+  return { enriched, errors }
+}
+
 export async function discoverAndStoreBuyerLeads({
   binding,
   domainId,
   fetchImpl,
   ...env
-}: DiscoverAndStoreBuyerLeadsInput): Promise<BuyerDiscoveryRunResult & { created: LeadRecord[] }> {
+}: DiscoverAndStoreBuyerLeadsInput): Promise<
+  BuyerDiscoveryRunResult & {
+    created: LeadRecord[]
+    enriched: BuyerDiscoveryAutoEnrichmentRecord[]
+    enrichmentErrors: BuyerDiscoveryAutoEnrichmentError[]
+  }
+> {
   const domain = await getDomain(binding, domainId)
   if (!domain) {
     throw new Error(`Domain ${domainId} not found.`)
@@ -351,9 +487,17 @@ export async function discoverAndStoreBuyerLeads({
     binding,
     run.newCandidates.map((candidate) => toLeadInsert(domainId, candidate)),
   )
+  const enrichment = await autoEnrichBuyerDiscoveryLeads({
+    binding,
+    leads: created,
+    APIFY_API_TOKEN: env.APIFY_API_TOKEN,
+    APIFY_CONTACT_SCRAPER_ACTOR_ID: env.APIFY_CONTACT_SCRAPER_ACTOR_ID,
+  })
 
   return {
     ...run,
     created,
+    enriched: enrichment.enriched,
+    enrichmentErrors: enrichment.errors,
   }
 }

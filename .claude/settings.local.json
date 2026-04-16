@@ -9,7 +9,9 @@
       "Bash(taskkill /F /IM \"node.exe\" /FI \"WINDOWTITLE eq wrangler*\")",
       "Bash(npx --yes kill-port 8787)",
       "Bash(curl -s http://localhost:8787/api/dashboard)",
-      "WebFetch(domain:www.klokgieter.nl)"
+      "WebFetch(domain:www.klokgieter.nl)",
+      "Skill(gstack-upgrade)",
+      "Skill(gstack-upgrade:*)"
     ]
   }
 }

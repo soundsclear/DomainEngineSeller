@@ -19,7 +19,7 @@ export function PublicRouteErrorPage() {
       <p className="text-sm font-medium uppercase tracking-[0.16em] text-emerald-700">Publieke pagina</p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">{title}</h1>
       <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600">{message}</p>
-      <Link className="mt-6 inline-flex rounded-md bg-emerald-900 px-4 py-2 text-sm font-medium text-white" to="/portfolio">
+      <Link className="mt-6 inline-flex rounded-md bg-emerald-900 px-4 py-2 text-sm font-medium text-white" to="/">
         Terug naar portfolio
       </Link>
     </section>

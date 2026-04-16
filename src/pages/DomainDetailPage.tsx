@@ -206,6 +206,9 @@ export function DomainDetailPage() {
         `${response.meta.created} nieuwe buyers gevonden`,
         response.meta.skipped > 0 ? `${response.meta.skipped} dubbelen geskipt` : null,
         response.meta.searchErrors > 0 ? `${response.meta.searchErrors} zoekopdrachten faalden` : null,
+        response.meta.enriched > 0 ? `${response.meta.enriched} sterke matches automatisch verrijkt` : null,
+        response.meta.contactsFound > 0 ? `${response.meta.contactsFound} contactpunten gevonden` : null,
+        response.meta.enrichmentErrors > 0 ? `${response.meta.enrichmentErrors} enrichment runs faalden` : null,
       ]
         .filter(Boolean)
         .join(', ')
@@ -222,7 +225,6 @@ export function DomainDetailPage() {
     if (!domainId || leadIds.length === 0) return
 
     const startedAt = Date.now()
-    const endpoint = `/api/domains/${domainId}/leads/enrich`
     const loadingSummary = `Contactgegevens ophalen voor ${leadIds.length} lead${leadIds.length === 1 ? '' : 's'}...`
 
     setLeadEnrichmentError(null)
@@ -241,17 +243,20 @@ export function DomainDetailPage() {
     })
 
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          leadIds,
-          enrichmentOnly: true,
-          allowContacting: false,
-        }),
-      })
+      const response =
+        scope === 'lead' && leadIds.length === 1
+          ? await fetch(`/api/domains/${domainId}/leads/${leadIds[0]}/enrich-contacts`, {
+              method: 'POST',
+            })
+          : await fetch(`/api/domains/${domainId}/lead-enrichment/run`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                leadIds,
+              }),
+            })
 
       const body = (await response.json().catch(() => null)) as unknown
       if (!response.ok) {
@@ -621,8 +626,8 @@ export function DomainDetailPage() {
               <div>
                 <p className="font-medium text-slate-900">{leads.length} opgeslagen leads</p>
                 <p className="mt-1">
-                  Buyer discovery gebruikt Anthropic voor redenering en Brave voor web search. Enrichment zoekt
-                  daarna contactgegevens op publieke websites.
+                  Buyer discovery gebruikt AI voor lead-fit redenering, Brave voor web research en Apify om
+                  sterke matches automatisch op publieke contactgegevens te verrijken.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">

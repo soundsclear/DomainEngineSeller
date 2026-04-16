@@ -15,25 +15,31 @@ This document tracks what is already in place for Phase 1 and what still needs i
 - starter pricing logic
 - starter outreach guardrails
 - starter secure-closing logic
-- starter admin and public pages
+- admin and public pages with active routing
 - demo data, sample CSV, and seed script
-- basic tests and green validation pass
+- real database-backed domain CRUD
+- CSV import flow wired to persistence
+- real dashboard metrics
+- public portfolio API and per-domain public pages
+- working inquiry capture and inbox/thread routes
+- lead persistence and buyer discovery persistence
+- contact enrichment with Apify-backed public contact lookup
+- outreach workflow persistence with approve/send routes
+- deal creation and status management
+- provider transaction persistence
+- transfer task persistence
+- settings persistence
+- broad automated test coverage, with a small number of current regressions to fix when flows change
 
 ## Still Needed For A Stronger Phase 1 MVP
 
-- real database-backed domain CRUD
-- CSV import flow wired to persistence
-- manual domain create and edit flows
-- real dashboard metrics
-- working contact and offer submissions
-- lead and buyer discovery persistence
-- thread and follow-up task persistence
-- deal creation and status management
-- Stripe invoice entity flow
-- provider transaction persistence
+- real admin authentication instead of the current mock login
 - audit log writes during important transitions
-- Xel transfer task generation with checklist outputs
-- manual checkpoint tracking and deadlines
+- stronger end-to-end coverage for outreach send flows
+- Xel transfer task generation with richer checklist outputs
+- manual checkpoint tracking and deadlines around transfers
+- clearer invoice entity lifecycle beyond payload generation
+- docs refresh whenever functionality outpaces the status docs
 
 ## Not The Current Priority
 

@@ -255,6 +255,70 @@ export async function upsertLeadContact(
   return getLeadById(binding, input.leadId)
 }
 
+export async function upsertLeadContactSnapshot(
+  binding: D1Database,
+  input: {
+    leadId: string
+    contactName?: string | null
+    contactEmail?: string | null
+    contactPageUrl?: string | null
+  },
+) {
+  await ensureOutreachSchema(binding)
+  const db = getDb(binding)
+  const existingLead = await getLeadById(binding, input.leadId)
+
+  if (!existingLead) {
+    throw new Error('Lead not found.')
+  }
+
+  const now = Date.now()
+  const [existingContact] = await db
+    .select()
+    .from(contacts)
+    .where(eq(contacts.leadId, input.leadId))
+    .limit(1)
+
+  const nextName =
+    input.contactName?.trim() ||
+    existingContact?.contactName ||
+    existingLead.contactName ||
+    existingLead.companyName
+  const nextEmail =
+    input.contactEmail?.trim() ||
+    existingContact?.contactEmail ||
+    existingLead.contactEmail ||
+    null
+  const nextPageUrl =
+    input.contactPageUrl?.trim() ||
+    existingContact?.contactPageUrl ||
+    existingLead.website ||
+    null
+
+  if (existingContact) {
+    await db
+      .update(contacts)
+      .set({
+        contactName: nextName,
+        contactEmail: nextEmail,
+        contactPageUrl: nextPageUrl,
+      })
+      .where(eq(contacts.id, existingContact.id))
+  } else {
+    await db.insert(contacts).values({
+      id: `contact-${crypto.randomUUID()}`,
+      leadId: input.leadId,
+      contactName: nextName,
+      contactRole: null,
+      contactEmail: nextEmail,
+      contactPageUrl: nextPageUrl,
+      createdAt: now,
+    })
+  }
+
+  return getLeadById(binding, input.leadId)
+}
+
 export async function listLeadWebsiteKeysForDomain(binding: D1Database, domainId: string) {
   const items = await listLeadsForDomain(binding, domainId)
   return items

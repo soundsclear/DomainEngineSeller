@@ -29,7 +29,9 @@ describe('DomainDetailPage', () => {
     fetchMock.mockReset()
   })
 
-  it('generates and saves an outreach workflow for a discovered buyer lead', async () => {
+  it('enriches contact data for a discovered buyer lead', async () => {
+    let leadFetchCount = 0
+
     fetchMock.mockImplementation(async (input) => {
       const url = requestUrl(input as string | URL | Request)
 
@@ -73,22 +75,42 @@ describe('DomainDetailPage', () => {
       }
 
       if (url.endsWith('/api/domains/domain-1/leads') && requestMethod(input as string | URL | Request) !== 'POST') {
+        leadFetchCount += 1
+
         return new Response(
           JSON.stringify({
-            items: [
-              {
-                id: 'lead-1',
-                domainId: 'domain-1',
-                companyName: 'Volt Storage',
-                website: 'https://voltstorage.example',
-                buyerFitReason: 'Already active in industrial battery storage.',
-                priorityScore: 92,
-                doNotContact: false,
-                country: 'NL',
-                source: 'buyer_discovery',
-                createdAt: Date.now(),
-              },
-            ],
+            items:
+              leadFetchCount === 1
+                ? [
+                    {
+                      id: 'lead-1',
+                      domainId: 'domain-1',
+                      companyName: 'Volt Storage',
+                      website: 'https://voltstorage.example',
+                      buyerFitReason: 'Already active in industrial battery storage.',
+                      priorityScore: 92,
+                      doNotContact: false,
+                      country: 'NL',
+                      source: 'buyer_discovery',
+                      createdAt: Date.now(),
+                    },
+                  ]
+                : [
+                    {
+                      id: 'lead-1',
+                      domainId: 'domain-1',
+                      companyName: 'Volt Storage',
+                      website: 'https://voltstorage.example',
+                      buyerFitReason: 'Already active in industrial battery storage.',
+                      priorityScore: 92,
+                      doNotContact: false,
+                      country: 'NL',
+                      source: 'buyer_discovery',
+                      createdAt: Date.now(),
+                      contactName: 'Jamie Buyer',
+                      contactEmail: 'jamie@voltstorage.example',
+                    },
+                  ],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
@@ -101,95 +123,48 @@ describe('DomainDetailPage', () => {
         })
       }
 
-      if (url.endsWith('/api/domains/domain-1/leads/lead-1/outreach-draft')) {
-        return new Response(
-          JSON.stringify({
-            lead: {
-              id: 'lead-1',
-              domainId: 'domain-1',
-              companyName: 'Volt Storage',
-              website: 'https://voltstorage.example',
-              buyerFitReason: 'Already active in industrial battery storage.',
-              priorityScore: 92,
-              doNotContact: false,
-              country: 'NL',
-              source: 'buyer_discovery',
-              createdAt: Date.now(),
-            },
-            domain: { id: 'domain-1', domainName: 'greenbatteryhub.com' },
-            result: {
-              eligible: true,
-              reason: 'Looks like a strong buyer fit.',
-              draft: {
-                sequenceStep: 'initial',
-                subject: 'greenbatteryhub.com - available',
-                body: 'Hi there,\n\ngreenbatteryhub.com is available.\n',
-                tone: 'standard',
-                language: 'EN',
-                recommendedFollowUpDays: 5,
-                wordCount: 20,
-                personalizationTokensUsed: ['lead.companyName'],
-              },
-            },
-            meta: { outreachCount: 0 },
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )
-      }
-
-      if (url.endsWith('/api/domains/domain-1/leads/lead-1/outreach-workflow')) {
+      if (url.endsWith('/api/domains/domain-1/leads/lead-1/enrich-contacts')) {
         return new Response(
           JSON.stringify({
             ok: true,
             item: {
-              thread: {
-                id: 'thread-1',
+              leadId: 'lead-1',
+              latestRun: {
+                id: 'lead-enrichment-1',
                 leadId: 'lead-1',
-                domainId: 'domain-1',
-                status: 'draft_prepared',
-                autoSendEnabled: false,
-                lastMessageAt: new Date().toISOString(),
-                createdAt: new Date().toISOString(),
+                provider: 'apify',
+                actorId: 'poidata/contact-details-scraper',
+                status: 'completed',
+                sourceWebsite: 'https://voltstorage.example',
+                rawPayloadJson: '[]',
+                errorMessage: null,
+                startedAt: Date.now(),
+                finishedAt: Date.now(),
+                createdAt: Date.now(),
               },
-              message: {
-                id: 'msg-1',
-                threadId: 'thread-1',
-                direction: 'outbound',
-                channel: 'email',
-                subject: 'greenbatteryhub.com - available',
-                body: 'Hi there,\n\ngreenbatteryhub.com is available.\n',
-                classification: 'draft',
-                createdAt: new Date().toISOString(),
-              },
-              followupTask: {
-                id: 'followup-1',
-                threadId: 'thread-1',
-                dueAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
-                status: 'pending',
-                createdAt: new Date().toISOString(),
-              },
-              lead: {
-                id: 'lead-1',
-                companyName: 'Volt Storage',
-                contactName: 'Volt Storage',
-              },
-              domain: {
-                id: 'domain-1',
-                domainName: 'greenbatteryhub.com',
-              },
-              draft: {
-                sequenceStep: 'initial',
-                subject: 'greenbatteryhub.com - available',
-                body: 'Hi there,\n\ngreenbatteryhub.com is available.\n',
-                tone: 'standard',
-                language: 'EN',
-                recommendedFollowUpDays: 5,
-                wordCount: 20,
-                personalizationTokensUsed: ['lead.companyName'],
-              },
+              contacts: [
+                {
+                  id: 'contact-1',
+                  leadId: 'lead-1',
+                  runId: 'lead-enrichment-1',
+                  type: 'email',
+                  value: 'jamie@voltstorage.example',
+                  label: 'Jamie Buyer',
+                  sourceUrl: 'https://voltstorage.example/contact',
+                  confidence: 92,
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+            meta: {
+              provider: 'apify',
+              actorId: 'poidata/contact-details-scraper',
+              website: 'https://voltstorage.example',
+              enriched: 1,
+              contactsFound: 1,
             },
           }),
-          { status: 201, headers: { 'Content-Type': 'application/json' } },
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
         )
       }
 
@@ -205,13 +180,11 @@ describe('DomainDetailPage', () => {
     )
 
     await screen.findByText('Volt Storage')
-    await userEvent.click(screen.getByRole('button', { name: /generate outreach draft/i }))
+    await userEvent.click(screen.getByRole('button', { name: /enrich contact data/i }))
 
-    await screen.findByText(/looks like a strong buyer fit/i)
-    expect(screen.getByText(/greenbatteryhub\.com - available/i)).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole('button', { name: /save to workflow/i }))
-    await screen.findByText(/draft opgeslagen als outreach workflow/i)
-    expect(screen.getByText(/saved outreach workflows/i)).toBeInTheDocument()
+    const summaries = await screen.findAllByText(/1 lead verrijkt/i)
+    expect(summaries.length).toBeGreaterThan(0)
+    expect(screen.getByText('Jamie Buyer')).toBeInTheDocument()
+    expect(screen.getByText('jamie@voltstorage.example')).toBeInTheDocument()
   })
 })

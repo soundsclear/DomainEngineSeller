@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
 import App from './App'
 import PublicApp from './PublicApp'
 import { DashboardPage } from './pages/DashboardPage'
@@ -21,23 +21,31 @@ export const router = createBrowserRouter([
     element: <PublicApp />,
     errorElement: <PublicRouteErrorPage />,
     children: [
+      { index: true, element: <PublicPortfolioPage />, loader: publicPortfolioLoader },
       { path: 'portfolio', element: <PublicPortfolioPage />, loader: publicPortfolioLoader },
       { path: 'd/:domainId', element: <PublicDomainPage />, loader: publicDomainLoader },
     ],
   },
   {
-    path: '/',
+    path: '/admin',
     element: <App />,
     children: [
       { index: true, element: <DashboardPage /> },
-      { path: 'login', element: <LoginPage /> },
-      { path: 'admin/inbox', element: <InboxPage /> },
-      { path: 'admin/inbox/:inquiryId', element: <InquiryThreadPage /> },
-      { path: 'admin/deals', element: <DealsPage /> },
-      { path: 'admin/domains', element: <DomainsPage /> },
-      { path: 'admin/domains/:domainId', element: <DomainDetailPage /> },
-      { path: 'admin/leads', element: <LeadsPage /> },
-      { path: 'admin/settings', element: <SettingsPage /> },
+      { path: 'inbox', element: <InboxPage /> },
+      { path: 'inbox/:inquiryId', element: <InquiryThreadPage /> },
+      { path: 'deals', element: <DealsPage /> },
+      { path: 'domains', element: <DomainsPage /> },
+      { path: 'domains/:domainId', element: <DomainDetailPage /> },
+      { path: 'leads', element: <LeadsPage /> },
+      { path: 'settings', element: <SettingsPage /> },
     ],
+  },
+  {
+    path: '/login',
+    element: <LoginPage />,
+  },
+  {
+    path: '/admin/login',
+    element: <Navigate to="/login" replace />,
   },
 ])

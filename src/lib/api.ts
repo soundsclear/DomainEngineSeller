@@ -231,7 +231,13 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   })
 
-  const data = (await response.json()) as T & { error?: string }
+  const contentType = response.headers.get('content-type') ?? ''
+  const rawText = await response.text()
+  const data = (
+    rawText && contentType.includes('application/json')
+      ? (JSON.parse(rawText) as T & { error?: string })
+      : ({ error: rawText || undefined } as T & { error?: string })
+  )
 
   if (!response.ok) {
     throw new Error(data.error ?? `Request failed with status ${response.status}`)
@@ -517,6 +523,9 @@ export function triggerBuyerDiscoveryApi(domainId: string) {
       created: number
       skipped: number
       searchErrors: number
+      enriched: number
+      enrichmentErrors: number
+      contactsFound: number
     }
   }>(`/api/domains/${domainId}/buyer-discovery`, {
     method: 'POST',
@@ -654,8 +663,33 @@ export interface RealDashboardMetrics {
   pendingOutreach: number
 }
 
-export function fetchDashboardMetrics() {
-  return fetchJson<{ metrics: RealDashboardMetrics }>('/api/metrics/dashboard')
+function mapLegacyDashboardMetrics(metrics: DashboardMetrics): RealDashboardMetrics {
+  return {
+    totalDomains: metrics.domains,
+    listedDomains: metrics.domains,
+    totalInquiries: metrics.inboundInquiries,
+    unreadInquiries: metrics.inboundInquiries,
+    activeDeals: metrics.dealsInProgress,
+    totalLeads: 0,
+    sentOutreach: 0,
+    pendingOutreach: metrics.draftOutreachQueue,
+  }
+}
+
+export async function fetchDashboardMetrics() {
+  try {
+    return await fetchJson<{ metrics: RealDashboardMetrics }>('/api/metrics/dashboard')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (!message.includes('404')) {
+      throw error
+    }
+
+    const legacy = await fetchDashboard()
+    return {
+      metrics: mapLegacyDashboardMetrics(legacy.metrics),
+    }
+  }
 }
 
 export interface SettingRecord {
