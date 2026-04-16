@@ -17,8 +17,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "cf:dev": "wrangler dev worker/index.ts",
-    "cf:deploy": "wrangler deploy worker/index.ts",
-    "cf:d1:migrate": "wrangler d1 execute domain-seller-engine --file=drizzle/schema.sql"
+    "cf:deploy": "pnpm build && wrangler deploy",
+    "cf:d1:migrate": "wrangler d1 execute domain-seller-engine --file=drizzle/schema.sql --remote"
   },
   "dependencies": {
     "@chenglou/pretext": "^0.0.5",

@@ -80,6 +80,7 @@ type Bindings = {
   OUTREACH_CONTACT_ENABLED?: string
   ADMIN_PASSWORD?: string
   ADMIN_SESSION_SECRET?: string
+  ASSETS?: Fetcher
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -1613,6 +1614,14 @@ app.post('/api/deals/:dealId/invoice', zValidator('json', generateInvoicePayload
 app.get('/api/metrics/dashboard', async (c) => {
   const metrics = await getRealDashboardMetrics(c.env.DB)
   return c.json({ metrics })
+})
+
+// Serve frontend SPA — must be last route
+app.all('*', async (c) => {
+  if (c.env.ASSETS) {
+    return c.env.ASSETS.fetch(c.req.raw)
+  }
+  return c.json({ error: 'Not found.' }, 404)
 })
 
 const worker = {

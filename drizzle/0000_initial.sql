@@ -56,6 +56,62 @@ CREATE TABLE price_recommendations (
   FOREIGN KEY (domain_id) REFERENCES domains(id)
 );
 
+CREATE TABLE IF NOT EXISTS lead_enrichment_runs (
+  id text PRIMARY KEY NOT NULL,
+  lead_id text NOT NULL,
+  provider text NOT NULL,
+  actor_id text NOT NULL,
+  status text NOT NULL,
+  source_website text,
+  raw_payload_json text,
+  error_message text,
+  started_at integer NOT NULL DEFAULT 0,
+  finished_at integer,
+  created_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lead_enrichment_contact_points (
+  id text PRIMARY KEY NOT NULL,
+  lead_id text NOT NULL,
+  enrichment_run_id text NOT NULL,
+  contact_type text NOT NULL,
+  value text NOT NULL,
+  label text,
+  source_url text,
+  source_label text,
+  source_type text,
+  confidence_score integer NOT NULL DEFAULT 0,
+  raw_metadata_json text,
+  is_primary integer NOT NULL DEFAULT 0,
+  verified integer NOT NULL DEFAULT 0,
+  created_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lead_contact_points (
+  id text PRIMARY KEY NOT NULL,
+  lead_id text NOT NULL,
+  run_id text,
+  type text NOT NULL,
+  value text NOT NULL,
+  label text,
+  source_url text,
+  confidence integer NOT NULL DEFAULT 50,
+  created_at integer NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS domain_page_content (
+  domain_id text PRIMARY KEY NOT NULL,
+  seo_title text NOT NULL,
+  meta_description text NOT NULL,
+  hero_headline text NOT NULL,
+  hero_subheadline text NOT NULL,
+  body_content text NOT NULL,
+  content_status text NOT NULL DEFAULT 'draft',
+  generated_at integer,
+  created_at integer NOT NULL,
+  updated_at integer NOT NULL
+);
+
 CREATE TABLE leads (
   id text PRIMARY KEY NOT NULL,
   domain_id text,
@@ -132,6 +188,9 @@ CREATE TABLE inbound_inquiries (
   sender_email text NOT NULL,
   message text NOT NULL,
   offer_amount integer,
+  status text NOT NULL DEFAULT 'new',
+  classification text,
+  classification_reason text,
   created_at integer NOT NULL,
   FOREIGN KEY (domain_id) REFERENCES domains(id),
   FOREIGN KEY (thread_id) REFERENCES outreach_threads(id)
