@@ -14,6 +14,9 @@ export interface BuyerOutreachInput {
   outreachCount: number
   autoSendEnabled?: boolean
   dailyLimit?: number
+  hasPrice?: boolean
+  followupDays1?: number
+  followupDays2?: number
 }
 
 export interface BuyerOutreachDraftResponse {
@@ -72,6 +75,9 @@ export function buildBuyerDiscoveryOutreachDraft(
     tone: input.tone ?? 'standard',
     autoSendEnabled: input.autoSendEnabled ?? false,
     dailyLimit: input.dailyLimit ?? 10,
+    hasPrice: input.hasPrice ?? false,
+    followupDays1: input.followupDays1 ?? 5,
+    followupDays2: input.followupDays2 ?? 7,
   })
 
   return {

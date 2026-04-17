@@ -63,6 +63,9 @@ import {
 import { discoverAndStoreBuyerLeads } from '../src/server/ai/buyer-discovery'
 import { generateAndStoreDomainSeoContent } from '../src/server/ai/seo-generation'
 import { sendInquiryNotification, sendOutreachEmail, sendTestEmail } from '../src/server/email'
+import { saveExperiment, listExperiments, updateExperimentStatus, saveExperimentVariant, getExperimentResults, getPricingIntelligence, updateAssignmentThread } from '../src/server/db/experiment-repository'
+import { assignVariantForLead } from '../src/server/experiment-rotation'
+import { logOutcomeForThread, logOutcomeForLead } from '../src/server/experiment-outcomes'
 
 type Bindings = {
   DB: D1Database
@@ -402,6 +405,23 @@ const progressDealSchema = z.object({
 
 const outreachBatchSendSchema = z.object({
   threadIds: z.array(z.string().min(1)).optional().default([]),
+})
+
+const createExperimentSchema = z.object({
+  name: z.string().min(1),
+})
+
+const createVariantSchema = z.object({
+  label: z.string().min(1),
+  tone: z.enum(['concise', 'standard', 'detailed']).default('standard'),
+  hasPrice: z.boolean().default(false),
+  subjectSlot: z.enum(['default', 'question', 'benefit']).default('default'),
+  followupDays1: z.number().int().min(1).default(5),
+  followupDays2: z.number().int().min(1).default(7),
+})
+
+const updateExperimentStatusSchema = z.object({
+  status: z.enum(['active', 'paused', 'completed']),
 })
 
 const leadEnrichmentBatchSchema = z.object({
@@ -845,11 +865,20 @@ app.post(
       }
 
       const outreachCount = await countOutreachWorkflowsForLead(c.env.DB, leadId)
+      const draftRotation = await assignVariantForLead(c.env.DB, leadId).catch(() => null)
+      const draftVariantConfig = draftRotation?.variant ?? null
+      const draftTone = (draftVariantConfig?.tone as 'concise' | 'standard' | 'detailed' | undefined) ?? c.req.valid('json').tone ?? 'standard'
+      const draftHasPrice = draftVariantConfig?.hasPrice ?? false
+      const draftFollowupDays1 = draftVariantConfig?.followupDays1 ?? 5
+      const draftFollowupDays2 = draftVariantConfig?.followupDays2 ?? 7
       const response = buildBuyerDiscoveryOutreachDraft({
         lead,
         domain,
         sender: c.req.valid('json').sender,
-        tone: c.req.valid('json').tone,
+        tone: draftTone,
+        hasPrice: draftHasPrice,
+        followupDays1: draftFollowupDays1,
+        followupDays2: draftFollowupDays2,
         outreachCount,
         autoSendEnabled: c.req.valid('json').autoSendEnabled,
         dailyLimit: c.req.valid('json').dailyLimit,
@@ -881,11 +910,20 @@ app.post(
       }
 
       const outreachCount = await countOutreachWorkflowsForLead(c.env.DB, leadId)
+      const rotation = await assignVariantForLead(c.env.DB, leadId).catch(() => null)
+      const variantConfig = rotation?.variant ?? null
+      const tone = (variantConfig?.tone as 'concise' | 'standard' | 'detailed' | undefined) ?? c.req.valid('json').tone ?? 'standard'
+      const hasPrice = variantConfig?.hasPrice ?? false
+      const followupDays1 = variantConfig?.followupDays1 ?? 5
+      const followupDays2 = variantConfig?.followupDays2 ?? 7
       const built = buildBuyerDiscoveryOutreachDraft({
         lead,
         domain,
         sender: c.req.valid('json').sender,
-        tone: c.req.valid('json').tone,
+        tone,
+        hasPrice,
+        followupDays1,
+        followupDays2,
         outreachCount,
         autoSendEnabled: c.req.valid('json').autoSendEnabled,
         dailyLimit: c.req.valid('json').dailyLimit,
@@ -947,6 +985,11 @@ app.post(
       workflow.followupTask.threadId = workflow.thread.id
 
       const record = await saveOutreachWorkflow(c.env.DB, workflow)
+
+      if (rotation) {
+        await updateAssignmentThread(c.env.DB, rotation.assignmentId, workflow.thread.id).catch(() => {})
+      }
+
       return c.json({ ok: true, item: record }, 201)
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : 'Could not save outreach workflow.' }, 400)
@@ -1208,6 +1251,14 @@ app.post('/api/inquiries', zValidator('json', inquiryInputSchema), async (c) => 
 
     const saved = await saveInboundInquiry(c.env.DB, payload)
 
+    // Log experiment outcomes — fire-and-forget, must not block the response
+    if (saved.inquiry.threadId) {
+      logOutcomeForThread(c.env.DB, saved.inquiry.threadId, 'reply_received').catch(() => {})
+      if (saved.inquiry.offerAmount != null) {
+        logOutcomeForThread(c.env.DB, saved.inquiry.threadId, 'offer_made', saved.inquiry.offerAmount).catch(() => {})
+      }
+    }
+
     writeAudit(c.env.DB, { entityType: 'inquiry', entityId: saved.inquiry.id, action: 'inquiry_received', actor: 'public', metadata: { domainName: saved.domainName, senderEmail: saved.inquiry.senderEmail } }).catch(() => {})
 
     const apiKey = c.env.RESEND_API_KEY
@@ -1324,6 +1375,10 @@ app.post('/api/inquiries/:id/classify', async (c) => {
     result.classification,
     result.reason,
   )
+
+  if (['serious_offer', 'info_request'].includes(result.classification) && inquiryWithThread.inquiry.threadId) {
+    logOutcomeForThread(c.env.DB, inquiryWithThread.inquiry.threadId, 'reply_positive').catch(() => {})
+  }
 
   writeAudit(c.env.DB, { entityType: 'inquiry', entityId: c.req.param('id'), action: 'inquiry_classified', actor: 'admin', metadata: { classification: result.classification } }).catch(() => {})
 
@@ -1614,6 +1669,47 @@ app.post('/api/deals/:dealId/invoice', zValidator('json', generateInvoicePayload
 app.get('/api/metrics/dashboard', async (c) => {
   const metrics = await getRealDashboardMetrics(c.env.DB)
   return c.json({ metrics })
+})
+
+// --- Experiments ---
+
+app.get('/api/experiments', async (c) => {
+  const items = await listExperiments(c.env.DB)
+  return c.json({ items })
+})
+
+app.post('/api/experiments', zValidator('json', createExperimentSchema), async (c) => {
+  const experiment = await saveExperiment(c.env.DB, c.req.valid('json'))
+  return c.json(experiment, 201)
+})
+
+app.patch(
+  '/api/experiments/:id',
+  zValidator('json', updateExperimentStatusSchema),
+  async (c) => {
+    await updateExperimentStatus(c.env.DB, c.req.param('id'), c.req.valid('json').status)
+    return c.json({ ok: true })
+  },
+)
+
+app.post(
+  '/api/experiments/:id/variants',
+  zValidator('json', createVariantSchema),
+  async (c) => {
+    const variant = await saveExperimentVariant(c.env.DB, {
+      experimentId: c.req.param('id'),
+      ...c.req.valid('json'),
+    })
+    return c.json(variant, 201)
+  },
+)
+
+app.get('/api/experiments/:id/results', async (c) => {
+  const [variants, pricing] = await Promise.all([
+    getExperimentResults(c.env.DB, c.req.param('id')),
+    getPricingIntelligence(c.env.DB),
+  ])
+  return c.json({ variants, pricing })
 })
 
 // Serve frontend SPA — must be last route
