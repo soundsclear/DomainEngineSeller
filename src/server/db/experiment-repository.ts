@@ -109,10 +109,7 @@ export async function saveExperimentVariant(
 ): Promise<ExperimentVariantRecord> {
   const drizzle = getDb(db)
   const record: ExperimentVariantRecord = { id: `var-${crypto.randomUUID()}`, ...input }
-  await drizzle.insert(experimentVariants).values({
-    ...record,
-    hasPrice: record.hasPrice ? 1 : 0,
-  } as never)
+  await drizzle.insert(experimentVariants).values(record)
   return record
 }
 

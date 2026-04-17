@@ -4,6 +4,7 @@ import {
   getExperimentWithVariants,
   countAssignmentsPerVariant,
   saveExperimentAssignment,
+  getAssignmentByLeadId,
 } from './db/experiment-repository'
 
 export function pickVariant(
@@ -28,6 +29,14 @@ export async function assignVariantForLead(
 ): Promise<RotationResult | null> {
   const experiment = await getActiveExperiment(db)
   if (!experiment) return null
+
+  // Return existing assignment if lead is already enrolled in this experiment
+  const existing = await getAssignmentByLeadId(db, leadId)
+  if (existing && existing.experimentId === experiment.id) {
+    const withVariants = await getExperimentWithVariants(db, experiment.id)
+    const variant = withVariants?.variants.find((v) => v.id === existing.variantId)
+    if (variant) return { assignmentId: existing.id, variant }
+  }
 
   const withVariants = await getExperimentWithVariants(db, experiment.id)
   if (!withVariants || withVariants.variants.length === 0) return null

@@ -219,13 +219,13 @@ ${sender.email}`
 
 Ik wilde even opvolgen over ${domain.name}.
 
-Nog steeds beschikbaar voor ${price}. Laat het me weten als u interesse heeft.
+Nog steeds beschikbaar voor ${price}. Laat het me weten als jullie interesse hebben.
 
 Groeten,
 ${sender.name}`
         : `Hallo ${firstName},
 
-Ik stuurde u vorige week een bericht over ${domain.name} en wilde even vragen of het iets voor ${lead.companyName} zou kunnen zijn.
+Ik stuurde jullie vorige week een bericht over ${domain.name} en wilde even vragen of het iets voor ${lead.companyName} zou kunnen zijn.
 
 Het domein is nog beschikbaar. Vraagprijs: ${price}.
 
