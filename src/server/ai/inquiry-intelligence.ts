@@ -144,9 +144,10 @@ function buildDraftReplyPrompt(input: DraftReplyInput): string {
 
   parts.push(
     `Classification of this inquiry: ${input.classification}`,
-    'Be professional and personalized. Do not auto-accept or auto-reject any offer.',
-    'Invite a conversation. Keep it brief (under 120 words).',
-    'Body should be plain text with no markdown formatting.',
+    'Write like a real person, not a sales robot. Use natural, conversational language.',
+    'Do not use em-dashes (—), bullet points, or any markdown formatting.',
+    'Do not auto-accept or auto-reject any offer. Invite a conversation.',
+    'Keep it brief (under 120 words). Plain text only.',
     'Return JSON with subject and body.',
   )
 
@@ -177,9 +178,10 @@ function buildNegotiationPrompt(input: NegotiateCounterInput): string {
     `Initial offer: ${input.inquiry.offerAmount != null ? `EUR ${input.inquiry.offerAmount}` : 'none stated'}.`,
     'Use the full thread history for conversational context and negotiation continuity.',
     'Choose the counter-offer price based only on the pricing guardrails and the latest buyer offer visible in the thread.',
-    'Do not accept the offer automatically. Stay professional, confident, and brief.',
+    'Do not accept the offer automatically. Write like a real person: confident but not corporate.',
+    'Do not use em-dashes (—), bullet points, or any markdown formatting.',
     'Reasoning should be 1-2 concise sentences.',
-    'Draft body should be plain text with no markdown formatting and under 140 words.',
+    'Draft body should be plain text and under 140 words.',
     'Return JSON with suggestedPrice, reasoning, draftSubject, and draftBody.',
     `Thread history:\n${history || 'No prior thread history.'}`,
   ]

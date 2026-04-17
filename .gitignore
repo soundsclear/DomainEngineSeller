@@ -19,6 +19,8 @@ dist-ssr
 .env
 .env.local
 .dev.vars
+.claude/worktrees/
+.codex-logs/
 
 # Editor directories and files
 .vscode/*

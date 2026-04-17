@@ -1,41 +1,36 @@
 {
-  "name": "domain-seller-engine",
-  "main": "worker/index.ts",
-  "compatibility_date": "2026-04-09",
-  "observability": {
-    "enabled": true
-  },
-  "assets": {
-    "directory": "./dist",
-    "binding": "ASSETS",
-    "html_handling": "single-page-application",
-    "run_worker_first": true
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "domain-seller-engine",
-      "database_id": "local-domain-seller-engine"
-    }
-  ],
-  "queues": {
-    "producers": [
-      {
-        "queue": "outreach-drafts",
-        "binding": "OUTREACH_QUEUE"
-      }
-    ]
-  },
-  "vars": {
-    "APP_PHASE": "phase1",
-    "OUTREACH_AUTO_SEND_ENABLED": "false",
-    "ANTHROPIC_API_KEY": "",
-    "BRAVE_SEARCH_API_KEY": "",
-    "RESEND_API_KEY": "",
-    "ADMIN_NOTIFY_EMAIL": "",
-    "EMAIL_FROM_ADDRESS": "onboarding@resend.dev",
-    "TEST_EMAIL_OVERRIDE": "",
-    "ADMIN_PASSWORD": "",
-    "ADMIN_SESSION_SECRET": ""
-  }
+	"name": "domain-seller-engine",
+	"main": "worker/index.ts",
+	"compatibility_date": "2026-04-09",
+	"workers_dev": true,
+	"observability": {
+		"enabled": true
+	},
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS",
+		"html_handling": "auto-trailing-slash",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": true
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "domain-seller-engine",
+			"database_id": "711369b4-1d5f-44e1-a0fe-0f978e045ae0"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"queue": "outreach-drafts",
+				"binding": "OUTREACH_QUEUE"
+			}
+		]
+	},
+	"vars": {
+		"APP_PHASE": "phase1",
+		"OUTREACH_AUTO_SEND_ENABLED": "false",
+		"EMAIL_FROM_ADDRESS": "onboarding@resend.dev"
+	}
 }

@@ -54,6 +54,9 @@ export function buildLeadOutreachDraft(input: BuildLeadOutreachDraftInput): Lead
     tone: input.tone ?? 'standard',
     autoSendEnabled: input.autoSendEnabled ?? false,
     dailyLimit: input.dailyLimit ?? 10,
+    hasPrice: false,
+    followupDays1: 5,
+    followupDays2: 7,
   }
 
   return {

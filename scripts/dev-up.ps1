@@ -5,7 +5,9 @@ $frontendPort = 5173
 $workerPort = 8787
 $logDir = Join-Path $repoRoot '.codex-logs'
 $frontendLog = Join-Path $logDir 'frontend-live.log'
+$frontendErrLog = Join-Path $logDir 'frontend-live.err.log'
 $workerLog = Join-Path $logDir 'worker-live.log'
+$workerErrLog = Join-Path $logDir 'worker-live.err.log'
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
@@ -59,41 +61,65 @@ function Stop-StalePortOwner {
 function Ensure-Started {
   param(
     [int]$Port,
-    [string]$Command
+    [string]$Name,
+    [string[]]$ArgumentList,
+    [string]$StdOutLog,
+    [string]$StdErrLog
   )
 
   $process = Get-ListeningProcess -Port $Port
   if ($process -and (Test-CurrentRepoOwner -Process $process)) {
+    Write-Host "$Name already running from current repo on port $Port (PID $($process.ProcessId))."
     return
   }
 
-  Start-Process -FilePath 'powershell' `
-    -ArgumentList @('-NoProfile', '-Command', $Command) `
+  Start-Process -FilePath 'pnpm.cmd' `
+    -ArgumentList $ArgumentList `
     -WorkingDirectory $repoRoot `
-    -WindowStyle Hidden | Out-Null
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $StdOutLog `
+    -RedirectStandardError $StdErrLog | Out-Null
+}
+
+function Wait-ForRepoOwner {
+  param(
+    [int]$Port,
+    [string]$Name,
+    [int]$TimeoutSeconds = 20
+  )
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+
+  while ((Get-Date) -lt $deadline) {
+    $process = Get-ListeningProcess -Port $Port
+    if ($process -and (Test-CurrentRepoOwner -Process $process)) {
+      return $process
+    }
+
+    Start-Sleep -Milliseconds 500
+  }
+
+  throw "$Name failed to start from current repo."
 }
 
 Stop-StalePortOwner -Port $frontendPort -Name 'frontend'
 Stop-StalePortOwner -Port $workerPort -Name 'worker'
 
-$frontendCommand = "pnpm dev -- --host 0.0.0.0 *> `"$frontendLog`""
-$workerCommand = "pnpm cf:dev *> `"$workerLog`""
+Ensure-Started `
+  -Port $frontendPort `
+  -Name 'Frontend' `
+  -ArgumentList @('dev', '--', '--host', '0.0.0.0') `
+  -StdOutLog $frontendLog `
+  -StdErrLog $frontendErrLog
+Ensure-Started `
+  -Port $workerPort `
+  -Name 'Worker' `
+  -ArgumentList @('cf:dev') `
+  -StdOutLog $workerLog `
+  -StdErrLog $workerErrLog
 
-Ensure-Started -Port $frontendPort -Command $frontendCommand
-Ensure-Started -Port $workerPort -Command $workerCommand
-
-Start-Sleep -Seconds 4
-
-$frontendProcess = Get-ListeningProcess -Port $frontendPort
-$workerProcess = Get-ListeningProcess -Port $workerPort
-
-if (-not $frontendProcess -or -not (Test-CurrentRepoOwner -Process $frontendProcess)) {
-  throw "Frontend failed to start from current repo."
-}
-
-if (-not $workerProcess -or -not (Test-CurrentRepoOwner -Process $workerProcess)) {
-  throw "Worker failed to start from current repo."
-}
+$frontendProcess = Wait-ForRepoOwner -Port $frontendPort -Name 'Frontend'
+$workerProcess = Wait-ForRepoOwner -Port $workerPort -Name 'Worker'
 
 Write-Host "Frontend ready on http://localhost:$frontendPort/"
 Write-Host "Worker ready on http://127.0.0.1:$workerPort/"

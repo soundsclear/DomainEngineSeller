@@ -57,24 +57,40 @@ function inferCopyLanguage(domain: DomainApiRecord) {
 function buildSeoPrompt(domain: DomainApiRecord) {
   const language = inferCopyLanguage(domain)
   const semanticGuidance = buildSemanticGuidance(domain)
+  const isDutch = language === 'Dutch'
 
   return [
-    `You are writing sales-page SEO copy for the domain ${domain.domainName}.`,
-    `Write in ${language}.`,
-    'Reason from the literal meaning of the domain, likely buyer intent, SEO relevance, and realistic commercial use cases.',
-    'Avoid empty hype such as "premium domain" unless it is directly justified by the semantics.',
+    `You are writing high-quality, search-engine-optimised sales copy for the domain name ${domain.domainName}.`,
+    `Write all copy in ${language}. Do not mix languages.`,
+    '',
+    '=== DOMAIN CONTEXT ===',
     semanticGuidance,
-    `Category: ${domain.category}.`,
-    `Language: ${domain.language}.`,
-    `Current notes: ${domain.notes || 'none'}.`,
-    `Target price guidance: EUR ${domain.targetPrice}.`,
-    'The copy should feel natural on a public sales page and still read credibly to a serious buyer.',
-    'bodyContent should be plain text with short paragraphs, not markdown bullets.',
-    'Keep seoTitle under 70 characters.',
-    'Keep metaDescription under 170 characters.',
-    'Do not invent a business model that contradicts the literal meaning of the domain.',
-    'Do not shift from products to services unless the literal tokens or notes clearly support services.',
-    'Return an object with seoTitle, metaDescription, heroHeadline, heroSubheadline, and bodyContent.',
+    `Category: ${domain.category || 'general'}.`,
+    `Notes from the owner: ${domain.notes?.trim() || 'none'}.`,
+    `Asking price: EUR ${domain.targetPrice}.`,
+    '',
+    '=== SEO PRINCIPLES TO FOLLOW ===',
+    '1. SEARCH INTENT: Start from the question a serious buyer would type into Google when looking to acquire a domain in this category. Answer that intent directly in the copy.',
+    `2. KEYWORD PLACEMENT: Include "${domain.domainName}" naturally in the seoTitle, the first sentence of bodyContent, and at least once more in the body. Include 2-3 related long-tail terms (e.g. "domeinnaam kopen", "te koop", the category term) naturally — never forced.`,
+    '3. META DESCRIPTION: Write exactly 140-155 characters. Include the domain name, the strongest benefit, and a clear call to action (e.g. "Doe een bod" or "Submit an offer"). Count characters carefully.',
+    '4. SEO TITLE: 50-70 characters. Include the domain name and a transactional modifier ("te koop", "kopen", "for sale", "buy"). No filler words.',
+    '5. HERO HEADLINE: Clear, specific, benefit-driven. Not just "[domain] te koop" — explain what the domain enables or who it is for.',
+    '6. HERO SUBHEADLINE: 1-2 sentences. Explain the commercial opportunity and who should be interested.',
+    '7. BODY CONTENT: 3 short paragraphs in plain text (no markdown, no bullets, no headers):',
+    '   - Paragraph 1 (relevance): What the domain name means, what it signals, and why it has built-in search and brand value. Include the domain name naturally.',
+    '   - Paragraph 2 (use cases): 2-3 concrete, realistic applications for a business, brand, or campaign in this category. Ground this in the literal domain meaning.',
+    '   - Paragraph 3 (call to action): Invite the reader to submit an offer or inquiry. Mention that the transfer process is straightforward. Keep it short and direct.',
+    '',
+    '=== QUALITY RULES ===',
+    '- No keyword stuffing. Each keyword appears at most 2-3 times across the entire output.',
+    '- No empty hype ("premium", "brandable", "catchy") unless directly supported by the domain semantics.',
+    '- No invented business models that contradict the literal meaning of the domain tokens.',
+    '- Copy must feel credible and natural to a serious buyer, not like templated filler.',
+    isDutch
+      ? '- Address the reader informally ("je", "jouw") in Dutch.'
+      : '- Use professional but approachable English.',
+    '',
+    'Return a JSON object with: seoTitle, metaDescription, heroHeadline, heroSubheadline, bodyContent.',
   ].join('\n')
 }
 

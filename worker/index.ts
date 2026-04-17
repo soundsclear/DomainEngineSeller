@@ -66,7 +66,7 @@ import { generateAndStoreDomainSeoContent } from '../src/server/ai/seo-generatio
 import { sendInquiryNotification, sendOutreachEmail, sendTestEmail } from '../src/server/email'
 import { saveExperiment, listExperiments, updateExperimentStatus, saveExperimentVariant, getExperimentResults, getPricingIntelligence, updateAssignmentThread } from '../src/server/db/experiment-repository'
 import { assignVariantForLead } from '../src/server/experiment-rotation'
-import { logOutcomeForThread, logOutcomeForLead } from '../src/server/experiment-outcomes'
+import { logOutcomeForThread } from '../src/server/experiment-outcomes'
 
 type Bindings = {
   DB: D1Database

@@ -64,32 +64,39 @@ export function buildPortfolioExcerpt(
   return buildFallbackHeroSubheadline(domain)
 }
 
-function buildFallbackSeoTitle(domain: Pick<DomainRecord, 'domainName' | 'language'>) {
+function buildFallbackSeoTitle(domain: Pick<DomainRecord, 'domainName' | 'language' | 'category'>) {
+  const category = domain.category || null
+
   if (isDutchDomain(domain)) {
-    return `${domain.domainName} kopen | Domein te koop`
+    return category
+      ? `${domain.domainName} te koop — domeinnaam voor ${category}`
+      : `${domain.domainName} te koop — domeinnaam direct beschikbaar`
   }
 
-  return `Buy ${domain.domainName} | Domain for sale`
+  return category
+    ? `Buy ${domain.domainName} — domain name for ${category}`
+    : `Buy ${domain.domainName} — domain name for sale`
 }
 
 function buildFallbackMetaDescription(
   domain: Pick<DomainRecord, 'domainName' | 'language' | 'category' | 'notes'>,
 ) {
-  const categoryLabel = domain.category || (isDutchDomain(domain) ? 'je volgende project' : 'your next project')
+  const baseTerm = extractBaseTerm(domain.domainName)
+  const categoryLabel = domain.category || (isDutchDomain(domain) ? 'online projecten' : 'online projects')
 
   if (isDutchDomain(domain)) {
-    return `${domain.domainName} is beschikbaar voor overname. Geschikt voor ${categoryLabel} en direct beschikbaar voor een serieus bod.`
+    return `Koop de domeinnaam ${domain.domainName}. Sterk merk voor ${categoryLabel}, direct beschikbaar voor overname. Doe een bod of vraag informatie op via het contactformulier.`
   }
 
-  return `${domain.domainName} is available to acquire. A strong fit for ${categoryLabel} with room for brand, search, and direct response value.`
+  return `Buy the domain name ${domain.domainName}. A strong brand fit for ${categoryLabel} built around ${baseTerm}. Available now — submit an offer or inquiry directly.`
 }
 
 function buildFallbackHeroHeadline(domain: Pick<DomainRecord, 'domainName' | 'language'>) {
   if (isDutchDomain(domain)) {
-    return `${domain.domainName} is beschikbaar`
+    return `${domain.domainName} beschikbaar`
   }
 
-  return `${domain.domainName} is available`
+  return `${domain.domainName} available`
 }
 
 function buildFallbackHeroSubheadline(
@@ -98,10 +105,10 @@ function buildFallbackHeroSubheadline(
   const categoryLabel = domain.category || inferCommercialAngle(domain)
 
   if (isDutchDomain(domain)) {
-    return `Een heldere domeinnaam voor ${categoryLabel}. Deel je plannen en ontvang snel reactie op je bod of vraag.`
+    return `Een directe, herkenbare domeinnaam voor ${categoryLabel}. Beschikbaar voor overname — deel je plannen en ontvang snel reactie.`
   }
 
-  return `A commercially clear domain for ${categoryLabel}. Share your plan and get a fast response on your inquiry or offer.`
+  return `A clear, memorable domain name for ${categoryLabel}. Available to acquire — share your use case and get a fast response.`
 }
 
 function buildFallbackBodyContent(domain: Pick<DomainRecord, 'domainName' | 'language' | 'category' | 'notes'>) {
@@ -110,23 +117,21 @@ function buildFallbackBodyContent(domain: Pick<DomainRecord, 'domainName' | 'lan
   const notesText = domain.notes.trim()
 
   if (isDutchDomain(domain)) {
-    const notesSentence = notesText
-      ? ` Huidige context: ${notesText}`
-      : ''
+    const notesLine = notesText ? `\n\n${notesText}` : ''
 
     return [
-      `${domain.domainName} past goed bij een merk, campagne of niche-aanbod rond ${baseTerm}. De naam is kort genoeg om te onthouden en concreet genoeg om direct relevant verkeer op te vangen.`,
-      `Voor partijen in ${categoryLabel} kan deze domeinnaam helpen om sneller vertrouwen, herkenning en vindbaarheid op te bouwen.${notesSentence}`,
-      `Gebruik het formulier op deze pagina om je interesse te delen, een bod te doen of je timing te bespreken.`,
+      `${domain.domainName} is een beschikbare domeinnaam die direct ingezet kan worden als merknaam, campagnedomein of online bestemming voor ${categoryLabel}. De naam is kort, concreet en makkelijk te onthouden.`,
+      `Voor bedrijven en ondernemers actief in ${baseTerm} biedt deze domeinnaam een sterke basis voor herkenbaarheid, vindbaarheid in zoekmachines en direct vertrouwen bij bezoekers.${notesLine}`,
+      `Gebruik het formulier hiernaast om je interesse kenbaar te maken, een bod te doen of meer informatie op te vragen over de overdracht.`,
     ].join('\n\n')
   }
 
-  const notesSentence = notesText ? ` Current context: ${notesText}` : ''
+  const notesLine = notesText ? `\n\n${notesText}` : ''
 
   return [
-    `${domain.domainName} works well for a brand, campaign, or focused offer built around ${baseTerm}. It is easy to remember and specific enough to support direct search relevance.`,
-    `Teams operating in ${categoryLabel} can use this domain to strengthen clarity, trust, and discoverability from the first visit.${notesSentence}`,
-    `Use the inquiry form on this page to share your use case, timeline, or offer amount.`,
+    `${domain.domainName} is an available domain name ready to use as a brand, campaign destination, or online home for ${categoryLabel}. Short, specific, and easy to remember.`,
+    `For businesses and teams working in ${baseTerm}, this domain provides a strong foundation for brand recognition, search engine visibility, and immediate visitor trust.${notesLine}`,
+    `Use the form on this page to express your interest, submit an offer, or ask about the transfer process.`,
   ].join('\n\n')
 }
 

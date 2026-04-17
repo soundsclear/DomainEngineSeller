@@ -25,18 +25,24 @@ This document tracks what is already in place for Phase 1 and what still needs i
 - lead persistence and buyer discovery persistence
 - contact enrichment with Apify-backed public contact lookup
 - outreach workflow persistence with approve/send routes
+- inbox intelligence with classify, draft-reply, negotiate, and send-reply flows
 - deal creation and status management
 - provider transaction persistence
 - transfer task persistence
 - settings persistence
-- broad automated test coverage, with a small number of current regressions to fix when flows change
+- basic admin authentication with signed cookie sessions
+- audit log writes for key inquiry and deal transitions
+- broad automated test coverage with passing typecheck and test suite
 
 ## Still Needed For A Stronger Phase 1 MVP
 
-- real admin authentication instead of the current mock login
-- audit log writes during important transitions
-- stronger end-to-end coverage for outreach send flows
-- Xel transfer task generation with richer checklist outputs
+- Cloudflare production setup:
+  - real D1 `database_id`
+  - remote migration run
+  - deploy with Worker assets
+- production secrets setup for admin auth and mail bindings
+- stronger end-to-end coverage for deployed outreach send flows
+- Xel transfer task generation with richer checklist outputs and clearer operator UX
 - manual checkpoint tracking and deadlines around transfers
 - clearer invoice entity lifecycle beyond payload generation
 - docs refresh whenever functionality outpaces the status docs
@@ -48,3 +54,4 @@ This document tracks what is already in place for Phase 1 and what still needs i
 - autonomous acquisitions
 - advanced lifecycle automation
 - auto-send outreach
+- email sender-domain verification and final `EMAIL_FROM_ADDRESS` switch

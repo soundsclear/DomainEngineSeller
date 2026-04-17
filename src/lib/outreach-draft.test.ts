@@ -29,6 +29,8 @@ const nlBase: OutreachDraftInput = {
   autoSendEnabled: false,
   dailyLimit: 10,
   hasPrice: true,
+  followupDays1: 5,
+  followupDays2: 7,
 }
 
 const enBase: OutreachDraftInput = {
@@ -53,6 +55,8 @@ const enBase: OutreachDraftInput = {
   autoSendEnabled: false,
   dailyLimit: 10,
   hasPrice: true,
+  followupDays1: 5,
+  followupDays2: 7,
 }
 
 // ---------------------------------------------------------------------------

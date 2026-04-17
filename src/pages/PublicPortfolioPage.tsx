@@ -21,8 +21,8 @@ export function PublicPortfolioPage() {
   const [sellMode, setSellMode] = useState<SellModeFilter>('all')
 
   usePageMeta(
-    'Domeinportfolio | Domain Seller Engine',
-    'Bekijk beschikbare domeinnamen, prijsrichting en directe contactmogelijkheden voor serieuze kopers.',
+    'Domeinnamen te koop | Premium .nl en .com domeinen',
+    'Bekijk beschikbare .nl en .com domeinnamen voor directe overname. Filter op categorie, bekijk de vraagprijs en neem contact op met de eigenaar.',
   )
 
   const categories = useMemo(

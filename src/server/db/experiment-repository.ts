@@ -5,8 +5,6 @@ import {
   experimentOutcomes,
   experiments,
   experimentVariants,
-  deals,
-  domains,
 } from './schema'
 
 export interface ExperimentRecord {

@@ -8,14 +8,11 @@ This scaffold is intentionally optimized for Phase 1: launch while the current p
 
 If a future Claude Code session is continuing this repository, start with:
 
-- [docs/claude-code-handoff-prompt.md](C:\Users\FD111\Documents\Course\Regenplanner\Domain Seller Engine\docs\claude-code-handoff-prompt.md)
-- [docs/implementation-outline.md](C:\Users\FD111\Documents\Course\Regenplanner\Domain Seller Engine\docs\implementation-outline.md)
-- [docs/next-session-checklist.md](C:\Users\FD111\Documents\Course\Regenplanner\Domain Seller Engine\docs\next-session-checklist.md)
-- [docs/repo-map.md](C:\Users\FD111\Documents\Course\Regenplanner\Domain Seller Engine\docs\repo-map.md)
-- [docs/phase1-status.md](C:\Users\FD111\Documents\Course\Regenplanner\Domain Seller Engine\docs\phase1-status.md)
-- [docs/architecture.md](C:\Users\FD111\Documents\Course\Regenplanner\Domain Seller Engine\docs\architecture.md)
-- [docs/phases.md](C:\Users\FD111\Documents\Course\Regenplanner\Domain Seller Engine\docs\phases.md)
-- [docs/registrars.md](C:\Users\FD111\Documents\Course\Regenplanner\Domain Seller Engine\docs\registrars.md)
+- `docs/agent-handoff.md`
+- `docs/phase1-status.md`
+- `docs/architecture.md`
+- `docs/phases.md`
+- `docs/registrars.md`
 
 Recommended repo verification command:
 
@@ -108,3 +105,4 @@ pnpm check
 - Direct sales should default to escrow-first or platform-managed transfers.
 - Stripe invoicing is supported as a controlled workflow, not as implicit transfer authorization.
 - Outreach remains draft-first by default.
+- Email sender-domain setup is intentionally deferred until the final go-live step.

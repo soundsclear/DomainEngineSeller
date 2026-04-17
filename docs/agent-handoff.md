@@ -42,9 +42,34 @@ Keep it short, concrete, and current.
 ## Current Snapshot
 
 - Updated by: Codex
-- Date: 2026-04-15
+- Date: 2026-04-16
 - Branch: `feature/inbox-reply-intelligence`
-- HEAD: `c6207e8`
+- HEAD: `7bd0fb8`
+
+## Latest Platform Work (2026-04-16)
+
+- Added inbox send-reply completion path:
+  - `POST /api/inquiries/:id/send-reply`
+  - UI button in inquiry thread to send the latest draft reply
+- Added admin auth:
+  - `POST /api/admin/login`
+  - `POST /api/admin/logout`
+  - `GET /api/admin/me`
+  - signed `admin_session` cookie, 8-hour TTL
+- Added audit logging:
+  - repository at `src/server/db/audit-repository.ts`
+  - `GET /api/admin/audit`
+  - writes on inquiry received/classified/replied and deal created/progressed
+- Cloudflare deployment was prepared for a single full-stack deploy:
+  - Worker serves API
+  - `ASSETS` binding serves built frontend from `dist`
+  - `wrangler.jsonc` uses SPA asset handling
+- `package.json` now includes:
+  - `pnpm cf:deploy`
+  - `pnpm cf:d1:migrate`
+- `pnpm cf:d1:migrate` must point at `drizzle/0000_initial.sql`
+- `scripts/dev-up.ps1` needed a startup hardening pass because a fixed 4-second wait could fail even when startup would succeed shortly after
+- Email sender domain setup remains intentionally last per user instruction
 
 ## Latest Local Dev Correction (2026-04-15)
 
@@ -217,10 +242,15 @@ Keep it short, concrete, and current.
 
 ## Open Follow-Ups
 
-- Investigate why local worker port `8787` served stale or incomplete route behavior while `8790` worked.
-- Consider surfacing buyer-discovery confidence and auto-enrichment reasons in the UI.
-- Consider documenting the buyer-discovery plus enrichment pipeline in `docs/architecture.md` once the flow stabilizes.
-- Continue polishing the public portfolio and landers so they feel fully premium and customer-ready.
+- User action still required for Cloudflare auth:
+  - run `npx wrangler login`
+  - run `npx wrangler d1 create domain-seller-engine`
+  - share the returned `database_id` so `wrangler.jsonc` can be updated
+- After D1 creation:
+  - run remote migration
+  - set production secrets such as `ADMIN_PASSWORD` and `ADMIN_SESSION_SECRET`
+  - deploy with `pnpm cf:deploy`
+- Email sender-domain verification is deliberately deferred until the very end.
 
 ## How To Continue
 
