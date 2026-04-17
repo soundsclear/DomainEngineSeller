@@ -14,6 +14,7 @@ import { PublicDomainPage } from './pages/PublicDomainPage'
 import { PublicPortfolioPage } from './pages/PublicPortfolioPage'
 import { publicDomainLoader, publicPortfolioLoader } from './pages/public-loaders'
 import { PublicRouteErrorPage } from './pages/PublicRouteErrorPage'
+import { ExperimentsPage } from './pages/ExperimentsPage'
 
 export const router = createBrowserRouter([
   {
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
       { path: 'domains/:domainId', element: <DomainDetailPage /> },
       { path: 'leads', element: <LeadsPage /> },
       { path: 'settings', element: <SettingsPage /> },
+      { path: 'experiments', element: <ExperimentsPage /> },
     ],
   },
   {

@@ -1,5 +1,5 @@
 import { useEffect, type PropsWithChildren } from 'react'
-import { BarChart3, BadgeEuro, Globe2, Inbox, LogOut, Mail, Settings } from 'lucide-react'
+import { BarChart3, BadgeEuro, FlaskConical, Globe2, Inbox, LogOut, Mail, Settings } from 'lucide-react'
 import { clsx } from 'clsx'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 
@@ -10,6 +10,7 @@ const navItems = [
   { to: '/admin/domains', label: 'Domains', icon: Globe2, exact: false },
   { to: '/admin/leads', label: 'Leads', icon: Mail, exact: false },
   { to: '/admin/settings', label: 'Settings', icon: Settings, exact: false },
+  { to: '/admin/experiments', label: 'Experiments', icon: FlaskConical, exact: false },
 ]
 
 const pageTitles: Record<string, string> = {
@@ -19,6 +20,7 @@ const pageTitles: Record<string, string> = {
   '/admin/domains': 'Domains',
   '/admin/leads': 'Leads',
   '/admin/settings': 'Settings',
+  '/admin/experiments': 'Experiments',
   '/login': 'Sign In',
 }
 
@@ -36,8 +38,8 @@ export function AppShell({ children }: PropsWithChildren) {
 
   useEffect(() => {
     fetch('/api/admin/me').then((res) => {
-      if (res.status === 401) navigate('/login')
-    }).catch(() => {})
+      if (!res.ok) navigate('/login')
+    }).catch(() => navigate('/login'))
   }, [navigate])
 
   async function handleLogout() {

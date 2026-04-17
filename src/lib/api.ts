@@ -736,3 +736,83 @@ export function createProviderTransactionApi(dealId: string, payload: CreateProv
     },
   )
 }
+
+export interface ExperimentRecord {
+  id: string
+  name: string
+  status: string
+  createdAt: number
+}
+
+export interface VariantResult {
+  variantId: string
+  label: string
+  tone: string
+  hasPrice: boolean
+  subjectSlot: string
+  sent: number
+  replies: number
+  replyPositive: number
+  offerCount: number
+  avgOffer: number | null
+  dealCount: number
+}
+
+export interface PricingRow {
+  category: string
+  avgFirstOffer: number | null
+  avgOfferPct: number | null
+  avgClosingPrice: number | null
+  dataPoints: number
+}
+
+export async function fetchExperiments(): Promise<ExperimentRecord[]> {
+  const res = await fetch('/api/experiments')
+  const data = await res.json() as { items: ExperimentRecord[] }
+  return data.items
+}
+
+export async function createExperiment(name: string): Promise<ExperimentRecord> {
+  const res = await fetch('/api/experiments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  return res.json() as Promise<ExperimentRecord>
+}
+
+export async function updateExperimentStatus(
+  id: string,
+  status: 'active' | 'paused' | 'completed',
+): Promise<void> {
+  await fetch(`/api/experiments/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+}
+
+export async function createExperimentVariant(
+  experimentId: string,
+  variant: {
+    label: string
+    tone: 'concise' | 'standard' | 'detailed'
+    hasPrice: boolean
+    subjectSlot: 'default' | 'question' | 'benefit'
+    followupDays1: number
+    followupDays2: number
+  },
+): Promise<void> {
+  await fetch(`/api/experiments/${experimentId}/variants`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(variant),
+  })
+}
+
+export async function fetchExperimentResults(
+  id: string,
+): Promise<{ variants: VariantResult[]; pricing: PricingRow[] }> {
+  const res = await fetch(`/api/experiments/${id}/results`)
+  return res.json() as Promise<{ variants: VariantResult[]; pricing: PricingRow[] }>
+}
