@@ -257,3 +257,38 @@ export const auditLog = sqliteTable('audit_log', {
   metadataJson: text('metadata_json'),
   createdAt: integer('created_at').notNull(),
 })
+
+export const experiments = sqliteTable('experiments', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  status: text('status').notNull().default('active'), // active | paused | completed
+  createdAt: integer('created_at').notNull(),
+})
+
+export const experimentVariants = sqliteTable('experiment_variants', {
+  id: text('id').primaryKey(),
+  experimentId: text('experiment_id').notNull().references(() => experiments.id),
+  label: text('label').notNull(), // "A", "B", "C"
+  tone: text('tone').notNull().default('standard'), // concise | standard | detailed
+  hasPrice: integer('has_price', { mode: 'boolean' }).notNull().default(false),
+  subjectSlot: text('subject_slot').notNull().default('default'), // default | question | benefit
+  followupDays1: integer('followup_days_1').notNull().default(5),
+  followupDays2: integer('followup_days_2').notNull().default(7),
+})
+
+export const experimentAssignments = sqliteTable('experiment_assignments', {
+  id: text('id').primaryKey(),
+  experimentId: text('experiment_id').notNull().references(() => experiments.id),
+  variantId: text('variant_id').notNull().references(() => experimentVariants.id),
+  leadId: text('lead_id').notNull().references(() => leads.id),
+  threadId: text('thread_id').references(() => outreachThreads.id),
+  assignedAt: integer('assigned_at').notNull(),
+})
+
+export const experimentOutcomes = sqliteTable('experiment_outcomes', {
+  id: text('id').primaryKey(),
+  assignmentId: text('assignment_id').notNull().references(() => experimentAssignments.id),
+  outcomeType: text('outcome_type').notNull(), // reply_received | reply_positive | offer_made | deal_closed
+  value: integer('value'), // eurocents for offer_made / deal_closed, null otherwise
+  occurredAt: integer('occurred_at').notNull(),
+})
