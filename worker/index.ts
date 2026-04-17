@@ -6,6 +6,7 @@ import { determineClosingNextStep } from '../src/lib/closing-rules'
 import { generatePriceRecommendation } from '../src/lib/pricing-engine'
 import { buildLeadOutreachDraft } from '../src/server/outreach'
 import { buildBuyerDiscoveryOutreachDraft } from '../src/server/buyer-outreach'
+import type { OutreachTone } from '../src/lib/outreach-draft'
 import { createLeadOutreachWorkflow } from '../src/server/outreach-workflow'
 import {
   approveOutreachWorkflow,
@@ -867,7 +868,9 @@ app.post(
       const outreachCount = await countOutreachWorkflowsForLead(c.env.DB, leadId)
       const draftRotation = await assignVariantForLead(c.env.DB, leadId).catch(() => null)
       const draftVariantConfig = draftRotation?.variant ?? null
-      const draftTone = (draftVariantConfig?.tone as 'concise' | 'standard' | 'detailed' | undefined) ?? c.req.valid('json').tone ?? 'standard'
+      const validTones = ['concise', 'standard', 'detailed'] as const
+      const rawDraftTone = draftVariantConfig?.tone
+      const draftTone: OutreachTone = (validTones as readonly string[]).includes(rawDraftTone ?? '') ? (rawDraftTone as OutreachTone) : (c.req.valid('json').tone ?? 'standard')
       const draftHasPrice = draftVariantConfig?.hasPrice ?? false
       const draftFollowupDays1 = draftVariantConfig?.followupDays1 ?? 5
       const draftFollowupDays2 = draftVariantConfig?.followupDays2 ?? 7
@@ -912,7 +915,9 @@ app.post(
       const outreachCount = await countOutreachWorkflowsForLead(c.env.DB, leadId)
       const rotation = await assignVariantForLead(c.env.DB, leadId).catch(() => null)
       const variantConfig = rotation?.variant ?? null
-      const tone = (variantConfig?.tone as 'concise' | 'standard' | 'detailed' | undefined) ?? c.req.valid('json').tone ?? 'standard'
+      const validTones2 = ['concise', 'standard', 'detailed'] as const
+      const rawTone = variantConfig?.tone
+      const tone: OutreachTone = (validTones2 as readonly string[]).includes(rawTone ?? '') ? (rawTone as OutreachTone) : (c.req.valid('json').tone ?? 'standard')
       const hasPrice = variantConfig?.hasPrice ?? false
       const followupDays1 = variantConfig?.followupDays1 ?? 5
       const followupDays2 = variantConfig?.followupDays2 ?? 7
@@ -1376,7 +1381,7 @@ app.post('/api/inquiries/:id/classify', async (c) => {
     result.reason,
   )
 
-  if (['serious_offer', 'info_request'].includes(result.classification) && inquiryWithThread.inquiry.threadId) {
+  if (result.classification === 'serious_offer' && inquiryWithThread.inquiry.threadId) {
     logOutcomeForThread(c.env.DB, inquiryWithThread.inquiry.threadId, 'reply_positive').catch(() => {})
   }
 

@@ -62,7 +62,7 @@ export function buildBuyerDiscoveryOutreachDraft(
     },
     lead: {
       companyName: input.lead.companyName,
-      contactName: input.lead.companyName,
+      contactName: input.lead.contactName ?? input.lead.companyName,
       website: input.lead.website ?? undefined,
       buyerFitReason:
         input.lead.buyerFitReason ??
