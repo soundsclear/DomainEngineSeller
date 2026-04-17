@@ -38,6 +38,9 @@ export const outreachDraftInputSchema = z.object({
   tone: z.enum(['concise', 'standard', 'detailed']).default('standard'),
   autoSendEnabled: z.boolean().default(false),
   dailyLimit: z.number().int().min(0).default(10),
+  hasPrice: z.boolean().default(false),
+  followupDays1: z.number().int().min(1).default(5),
+  followupDays2: z.number().int().min(1).default(7),
 })
 
 export type OutreachDraftInput = z.infer<typeof outreachDraftInputSchema>
@@ -75,12 +78,6 @@ function stepFromCount(count: number): OutreachSequenceStep {
   return 'follow_up_2'
 }
 
-function followUpDays(step: OutreachSequenceStep): number | null {
-  if (step === 'initial') return 5
-  if (step === 'follow_up_1') return 7
-  return null
-}
-
 function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length
 }
@@ -103,15 +100,15 @@ function categoryAngle(category: string, language: OutreachLanguage): string {
 
   const angles: Record<string, { NL: string; EN: string }> = {
     'home services': {
-      NL: 'klanten in uw regio direct aan u koppelt',
+      NL: 'klanten in jullie regio direct aan jullie koppelt',
       EN: 'connects local customers directly to your services',
     },
     energy: {
-      NL: 'de energiemarkt aansprak als een autoriteitsdomein',
+      NL: 'de energiemarkt aanspreekt als een autoriteitsdomein',
       EN: 'positions you as an authority in the energy market',
     },
     marketing: {
-      NL: 'uw SEO-positie in de regio versterkt',
+      NL: 'jullie SEO-positie in de regio versterkt',
       EN: 'strengthens your regional SEO positioning',
     },
     saas: {
@@ -142,7 +139,7 @@ function categoryAngle(category: string, language: OutreachLanguage): string {
 
   // Generic fallback
   return language === 'NL'
-    ? 'direct herkenbaar is voor uw doelgroep'
+    ? 'direct herkenbaar is voor jullie doelgroep'
     : 'is immediately recognisable to your target audience'
 }
 
@@ -154,6 +151,7 @@ function buildNL(
   input: OutreachDraftInput,
   step: OutreachSequenceStep,
   tone: OutreachTone,
+  hasPrice: boolean,
 ): { subject: string; body: string; tokens: string[] } {
   const { domain, lead, sender } = input
   const price = formatPrice(domain.targetPrice, domain.currency, 'NL')
@@ -163,47 +161,46 @@ function buildNL(
   const tokens = ['domain.name', 'lead.contactName', 'lead.companyName', 'domain.targetPrice', 'lead.buyerFitReason']
 
   if (step === 'initial') {
-    const subject = `${domain.name} — beschikbaar voor ${lead.companyName}`
+    const subject = `${domain.name} beschikbaar voor ${lead.companyName}`
 
     let body: string
 
     if (tone === 'concise') {
+      const priceLine = hasPrice ? `\nDe vraagprijs is ${price}.\n` : ''
       body = `Hallo ${firstName},
 
-${domain.name} staat te koop. ${lead.buyerFitReason}
+Ik neem contact op omdat ${domain.name} beschikbaar is. Omdat jullie ${lead.buyerFitReason}
+${priceLine}
+Is dit iets wat relevant kan zijn voor jullie?
 
-Vraagprijs: ${price}. Interesse?
-
-Met vriendelijke groet,
+Groeten,
 ${sender.name}
 ${sender.email}`
     } else if (tone === 'standard') {
+      const priceLine = hasPrice ? `\nDe vraagprijs is ${price}.\n` : ''
       body = `Hallo ${firstName},
 
-Ik neem contact op omdat ${domain.name} beschikbaar is en dit domein ${angle}.
+Ik neem even contact op omdat ${domain.name} beschikbaar is en ik denk dat het strategisch interessant kan zijn. Het is een domein dat ${angle}.
 
-${lead.buyerFitReason}
+Omdat jullie ${lead.buyerFitReason}
+${priceLine}
+Is aankoop van dit domein iets wat jullie zou aanspreken? Als dat zo is, deel ik graag de voorwaarden en prijsindicatie.
 
-De vraagprijs is ${price}. Als u interesse heeft, reageer dan op dit bericht en ik stuur u meer informatie.
-
-Met vriendelijke groet,
+Groeten,
 ${sender.name}
 ${sender.email}`
     } else {
       // detailed
+      const priceLine = hasPrice ? `\nDe vraagprijs is ${price}.\n` : ''
       body = `Hallo ${firstName},
 
-Mijn naam is ${sender.name} en ik beheer een portfolio van gerichte domeinnamen voor de Nederlandse markt.
+Mijn naam is ${sender.name}. Ik beheer een portfolio van domeinnamen en ben ${lead.companyName} tegengekomen tijdens mijn onderzoek.
 
-Ik ben ${lead.companyName} tegengekomen tijdens mijn onderzoek en wil u ${domain.name} aanbieden, een domein dat ${angle}.
+Ik wil jullie ${domain.name} aanbieden, een domein dat ${angle}. Omdat jullie ${lead.buyerFitReason}
+${priceLine}
+${domain.notes ? `Wat extra context: ${domain.notes}\n\n` : ''}Als dit interessant klinkt, hoor ik het graag. Dan deel ik de verdere details en prijsindicatie.
 
-Waarom ${lead.companyName}? ${lead.buyerFitReason}
-
-${domain.notes ? `Aanvullende context: ${domain.notes}\n\n` : ''}De vraagprijs is ${price}. Directe verkoop is mogelijk, of we kunnen kort overleggen als u vragen heeft.
-
-Ik hoor graag van u.
-
-Met vriendelijke groet,
+Groeten,
 ${sender.name}
 ${sender.email}`
 
@@ -214,27 +211,27 @@ ${sender.email}`
   }
 
   if (step === 'follow_up_1') {
-    const subject = `Re: ${domain.name} — korte follow-up`
+    const subject = `Re: ${domain.name} beschikbaar voor ${lead.companyName}`
 
     const body =
       tone === 'concise'
         ? `Hallo ${firstName},
 
-Korte follow-up op mijn vorige bericht over ${domain.name}.
+Ik wilde even opvolgen over ${domain.name}.
 
 Nog steeds beschikbaar voor ${price}. Laat het me weten als u interesse heeft.
 
-Met vriendelijke groet,
+Groeten,
 ${sender.name}`
         : `Hallo ${firstName},
 
-Ik stuurde u vorige week een bericht over ${domain.name} en wilde nog een keer vragen of dit iets is voor ${lead.companyName}.
+Ik stuurde u vorige week een bericht over ${domain.name} en wilde even vragen of het iets voor ${lead.companyName} zou kunnen zijn.
 
 Het domein is nog beschikbaar. Vraagprijs: ${price}.
 
-Als de timing nu niet uitkomt, laat het gerust weten — dan houd ik u op de hoogte als er veranderingen zijn.
+Als de timing nu niet uitkomt, geeft dat ook niks, laat het dan gerust weten.
 
-Met vriendelijke groet,
+Groeten,
 ${sender.name}
 ${sender.email}`
 
@@ -242,17 +239,17 @@ ${sender.email}`
   }
 
   // follow_up_2
-  const subject = `${domain.name} — laatste bericht`
+  const subject = `Nog een laatste bericht over ${domain.name}`
 
   const body = `Hallo ${firstName},
 
-Dit is mijn laatste bericht over ${domain.name}.
+Dit is mijn laatste berichtje over ${domain.name}.
 
-Als u geen interesse heeft, hoeft u niet te reageren — ik zal u niet verder contacteren over dit onderwerp.
+Als u geen interesse heeft, hoeft u niets te doen. Ik stuur u hier verder niks meer over.
 
-Mocht u in de toekomst toch interesse krijgen, dan kunt u me bereiken via ${sender.email}.
+Mocht u in de toekomst toch interesse krijgen, dan kunt u me altijd bereiken via ${sender.email}.
 
-Met vriendelijke groet,
+Groeten,
 ${sender.name}`
 
   return { subject, body, tokens }
@@ -266,6 +263,7 @@ function buildEN(
   input: OutreachDraftInput,
   step: OutreachSequenceStep,
   tone: OutreachTone,
+  hasPrice: boolean,
 ): { subject: string; body: string; tokens: string[] } {
   const { domain, lead, sender } = input
   const price = formatPrice(domain.targetPrice, domain.currency, 'EN')
@@ -275,47 +273,46 @@ function buildEN(
   const tokens = ['domain.name', 'lead.contactName', 'lead.companyName', 'domain.targetPrice', 'lead.buyerFitReason']
 
   if (step === 'initial') {
-    const subject = `${domain.name} — available for ${lead.companyName}`
+    const subject = `${domain.name} available for ${lead.companyName}`
 
     let body: string
 
     if (tone === 'concise') {
+      const priceLine = hasPrice ? `\nThe asking price is ${price}.\n` : ''
       body = `Hi ${firstName},
 
-${domain.name} is available for sale. ${lead.buyerFitReason}
-
-Asking price: ${price}. Interested?
+I'm reaching out because ${domain.name} is available. Because you ${lead.buyerFitReason}
+${priceLine}
+Would this be relevant for you?
 
 Best,
 ${sender.name}
 ${sender.email}`
     } else if (tone === 'standard') {
+      const priceLine = hasPrice ? `\nThe asking price is ${price}.\n` : ''
       body = `Hi ${firstName},
 
-I'm reaching out because ${domain.name} is available and it ${angle}.
+I'm reaching out because ${domain.name} is available and I think it could be strategically interesting. It is a domain that ${angle}.
 
-${lead.buyerFitReason}
+Because you ${lead.buyerFitReason}
+${priceLine}
+Would acquiring this domain be something that appeals to you? If so, I'm happy to share the details and pricing.
 
-The asking price is ${price}. If you're interested, reply to this message and I'll share more details.
-
-Best regards,
+Best,
 ${sender.name}
 ${sender.email}`
     } else {
       // detailed
+      const priceLine = hasPrice ? `\nThe asking price is ${price}.\n` : ''
       body = `Hi ${firstName},
 
-My name is ${sender.name} and I manage a portfolio of targeted domain names.
+My name is ${sender.name}. I manage a portfolio of domain names and came across ${lead.companyName} while doing some research.
 
-I came across ${lead.companyName} and wanted to offer you ${domain.name} — a domain that ${angle}.
+I wanted to reach out about ${domain.name}, a domain that ${angle}. Because you ${lead.buyerFitReason}
+${priceLine}
+${domain.notes ? `A bit of context: ${domain.notes}\n\n` : ''}If this sounds interesting, I'd love to hear from you and can share further details and pricing.
 
-Why ${lead.companyName}? ${lead.buyerFitReason}
-
-${domain.notes ? `A bit more context: ${domain.notes}\n\n` : ''}The asking price is ${price}. We can close quickly or have a brief conversation if you have questions.
-
-I'd love to hear from you.
-
-Best regards,
+Best,
 ${sender.name}
 ${sender.email}`
 
@@ -326,13 +323,13 @@ ${sender.email}`
   }
 
   if (step === 'follow_up_1') {
-    const subject = `Re: ${domain.name} — quick follow-up`
+    const subject = `Re: ${domain.name} available for ${lead.companyName}`
 
     const body =
       tone === 'concise'
         ? `Hi ${firstName},
 
-Following up on my note about ${domain.name}.
+Just following up on my note about ${domain.name}.
 
 Still available at ${price}. Let me know if you're interested.
 
@@ -340,13 +337,13 @@ Best,
 ${sender.name}`
         : `Hi ${firstName},
 
-I sent you a note last week about ${domain.name} and wanted to follow up.
+I sent you a note last week about ${domain.name} and wanted to check in.
 
 The domain is still available at ${price}.
 
-If the timing isn't right, no worries — just let me know and I'll keep you in the loop if anything changes.
+If the timing isn't right, no worries at all. Just let me know.
 
-Best regards,
+Best,
 ${sender.name}
 ${sender.email}`
 
@@ -354,15 +351,15 @@ ${sender.email}`
   }
 
   // follow_up_2
-  const subject = `${domain.name} — final note`
+  const subject = `Final note on ${domain.name}`
 
   const body = `Hi ${firstName},
 
 This is my last message about ${domain.name}.
 
-If you're not interested, no reply needed — I won't follow up on this topic again.
+If it's not a fit, no reply needed. I won't follow up again.
 
-If you'd ever like to revisit this in the future, you can reach me at ${sender.email}.
+If you ever want to revisit this down the line, you can reach me at ${sender.email}.
 
 Best,
 ${sender.name}`
@@ -405,8 +402,13 @@ export function generateOutreachDraft(rawInput: OutreachDraftInput): OutreachDra
 
   const { subject, body, tokens } =
     language === 'NL'
-      ? buildNL(input, step, tone)
-      : buildEN(input, step, tone)
+      ? buildNL(input, step, tone, input.hasPrice)
+      : buildEN(input, step, tone, input.hasPrice)
+
+  const recommendedFollowUpDays =
+    step === 'initial' ? input.followupDays1 :
+    step === 'follow_up_1' ? input.followupDays2 :
+    null
 
   return {
     eligible: true,
@@ -417,7 +419,7 @@ export function generateOutreachDraft(rawInput: OutreachDraftInput): OutreachDra
       body,
       tone,
       language,
-      recommendedFollowUpDays: followUpDays(step),
+      recommendedFollowUpDays,
       wordCount: countWords(body),
       personalizationTokensUsed: tokens,
     },

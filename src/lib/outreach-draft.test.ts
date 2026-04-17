@@ -28,6 +28,7 @@ const nlBase: OutreachDraftInput = {
   tone: 'standard',
   autoSendEnabled: false,
   dailyLimit: 10,
+  hasPrice: true,
 }
 
 const enBase: OutreachDraftInput = {
@@ -51,6 +52,7 @@ const enBase: OutreachDraftInput = {
   tone: 'standard',
   autoSendEnabled: false,
   dailyLimit: 10,
+  hasPrice: true,
 }
 
 // ---------------------------------------------------------------------------
