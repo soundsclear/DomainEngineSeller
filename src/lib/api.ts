@@ -767,27 +767,23 @@ export interface PricingRow {
 }
 
 export async function fetchExperiments(): Promise<ExperimentRecord[]> {
-  const res = await fetch('/api/experiments')
-  const data = await res.json() as { items: ExperimentRecord[] }
+  const data = await fetchJson<{ items: ExperimentRecord[] }>('/api/experiments')
   return data.items
 }
 
 export async function createExperiment(name: string): Promise<ExperimentRecord> {
-  const res = await fetch('/api/experiments', {
+  return fetchJson<ExperimentRecord>('/api/experiments', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   })
-  return res.json() as Promise<ExperimentRecord>
 }
 
 export async function updateExperimentStatus(
   id: string,
   status: 'active' | 'paused' | 'completed',
 ): Promise<void> {
-  await fetch(`/api/experiments/${id}`, {
+  await fetchJson<{ ok: boolean }>(`/api/experiments/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
   })
 }
@@ -803,9 +799,8 @@ export async function createExperimentVariant(
     followupDays2: number
   },
 ): Promise<void> {
-  await fetch(`/api/experiments/${experimentId}/variants`, {
+  await fetchJson<{ id: string }>(`/api/experiments/${experimentId}/variants`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(variant),
   })
 }
@@ -813,6 +808,5 @@ export async function createExperimentVariant(
 export async function fetchExperimentResults(
   id: string,
 ): Promise<{ variants: VariantResult[]; pricing: PricingRow[] }> {
-  const res = await fetch(`/api/experiments/${id}/results`)
-  return res.json() as Promise<{ variants: VariantResult[]; pricing: PricingRow[] }>
+  return fetchJson<{ variants: VariantResult[]; pricing: PricingRow[] }>(`/api/experiments/${id}/results`)
 }
