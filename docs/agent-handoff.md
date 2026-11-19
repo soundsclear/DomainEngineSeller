@@ -39,6 +39,12 @@ Keep it short, concrete, and current.
   - `src/pages/PublicPortfolioPage.tsx`
   - `src/pages/PublicDomainPage.tsx`
 
+## Public storefront redesign
+
+- Domain Lane’s portfolio and domain pages use a shared storefront stylesheet, with their own typography, palette and responsive layout.
+- The portfolio shows customer-facing search, relevant filters and indicative prices. The domain page leads to the existing inquiry form and Turnstile verification.
+- Routes, pricing data and the inquiry API contract are the same.
+
 ## Current Snapshot
 
 - Updated by: Codex
